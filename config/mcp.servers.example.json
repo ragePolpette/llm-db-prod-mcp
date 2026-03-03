@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "llm-db-prod-mcp": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8782/sse"
+      ],
+      "env": {}
+    }
+  }
+}
