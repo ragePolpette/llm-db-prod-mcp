@@ -2,7 +2,9 @@
 .env
 .env.*
 !.env.example
-config.local.*`n!config.local.example.*
+config.local.*
+!config.local.example.*
+scripts/local/
 
 # Node
 node_modules/

@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { isIP } from "node:net";
 
 let poolPromise;
 
@@ -9,12 +10,28 @@ function mapParameters(request, parameters) {
     }
 }
 
+function normalizeHostForIpCheck(hostValue) {
+    const raw = String(hostValue || "").trim();
+    if (!raw) return "";
+    const withoutBrackets = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1) : raw;
+    const base = withoutBrackets.split("\\")[0].split(",")[0].trim();
+    return base;
+}
+
+function disableSniForIpServer(pool) {
+    const host = normalizeHostForIpCheck(pool?.config?.server);
+    if (!host || isIP(host) === 0) return;
+    pool.config.options = pool.config.options || {};
+    pool.config.options.serverName = "localhost";
+}
+
 async function getPool(connectionString) {
     if (!connectionString) {
         throw new Error("Connection string non configurata (DB_PROD_CONNECTION_STRING).");
     }
     if (!poolPromise) {
         const pool = new sql.ConnectionPool(connectionString);
+        disableSniForIpServer(pool);
         poolPromise = pool.connect();
     }
     return poolPromise;
@@ -137,3 +154,5 @@ export async function runReadQuery({
         });
     });
 }
+
+

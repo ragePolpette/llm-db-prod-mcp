@@ -8,7 +8,9 @@
         "npx",
         "-y",
         "mcp-remote",
-        "http://127.0.0.1:8782/sse"
+        "http://127.0.0.1:8782/mcp",
+        "--transport",
+        "http-only"
       ],
       "env": {}
     }

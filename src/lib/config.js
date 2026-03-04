@@ -14,6 +14,15 @@ function clamp(value, min, max) {
     return Math.max(min, Math.min(value, max));
 }
 
+function parseCsvList(value, fallback) {
+    if (value === undefined || value === null || value === "") return [...fallback];
+    const list = String(value)
+        .split(",")
+        .map(item => item.trim())
+        .filter(Boolean);
+    return list.length ? list : [...fallback];
+}
+
 function toEnum(value, allowed, fallback, envName) {
     if (value === undefined || value === null || value === "") return fallback;
     const normalized = String(value).trim().toLowerCase();
@@ -77,7 +86,21 @@ export function getProdConfig() {
         server: {
             host: process.env.MCP_PROD_HOST || "127.0.0.1",
             port: clamp(toInt(process.env.MCP_PROD_PORT, 8782), 1, 65535),
-            path: process.env.MCP_PROD_PATH || "/sse"
+            path: process.env.MCP_PROD_PATH || "/mcp",
+            sseEnabled: toBool(process.env.MCP_PROD_SSE_ENABLED, false),
+            allowedHosts: parseCsvList(
+                process.env.MCP_PROD_ALLOWED_HOSTS,
+                ["localhost", "127.0.0.1", "[::1]"]
+            ),
+            allowedOrigins: parseCsvList(
+                process.env.MCP_PROD_ALLOWED_ORIGINS,
+                [
+                    "http://localhost:*",
+                    "http://127.0.0.1:*",
+                    "https://localhost:*",
+                    "https://127.0.0.1:*"
+                ]
+            )
         }
     };
 }

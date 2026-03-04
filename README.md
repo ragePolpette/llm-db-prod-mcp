@@ -23,7 +23,7 @@ npm install
 npm start
 ```
 
-Server esposto in locale su `http://127.0.0.1:8782/sse` (configurabile via env).
+Server esposto in locale su `http://127.0.0.1:8782/mcp` (configurabile via env).
 Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
 
 ## Variabili ambiente
@@ -55,7 +55,10 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
 - `ANON_LLM_MAX_INPUT_CHARS` (default `3000`, oltre passa a deterministic)
 - `MCP_PROD_HOST` (default `127.0.0.1`)
 - `MCP_PROD_PORT` (default `8782`)
-- `MCP_PROD_PATH` (default `/sse`)
+- `MCP_PROD_PATH` (default `/mcp`)
+- `MCP_PROD_SSE_ENABLED` (default `false`; se `false`, `GET /mcp` risponde `405`)
+- `MCP_PROD_ALLOWED_HOSTS` (default `localhost,127.0.0.1,[::1]`)
+- `MCP_PROD_ALLOWED_ORIGINS` (default localhost loopback con wildcard porta)
 - `MCP_MODELS_DIR` (default `.local/models`)
 - `OLLAMA_MODELS` (default `.local/models/ollama`)
 
@@ -67,6 +70,8 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
   - valida SQL in ingresso (single statement reale, parentesi/commenti/stringhe bilanciate, blocco keyword/pattern pericolosi)
   - rifiuta parametri non validi (nome parametro e tipo valore)
   - applica limitazione righe/dimensione server-side (`ROWCOUNT`/`TEXTSIZE`) + controllo durante stream
+- `db_prod_info`
+  - descrive scopo operativo e limiti di sicurezza (read-only + anonimizzazione)
 
 ## Esempio configurazione MCP (Codex/Client)
 

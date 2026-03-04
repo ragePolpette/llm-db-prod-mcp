@@ -96,7 +96,7 @@ function createMcpServer() {
         tools: [
             {
                 name: "db_prod_read_anonymized",
-                description: "Esegue query SQL di sola lettura sul DB di produzione e anonimizza i risultati tramite modello locale.",
+                description: "DB PROD: sola lettura SQL su produzione con anonimizzazione obbligatoria prima della risposta.",
                 inputSchema: {
                     type: "object",
                     properties: {
@@ -115,12 +115,35 @@ function createMcpServer() {
                     },
                     required: ["sql"]
                 }
+            },
+            {
+                name: "db_prod_info",
+                description: "Spiega scopo, limiti e regole di sicurezza del MCP DB PROD.",
+                inputSchema: {
+                    type: "object",
+                    properties: {}
+                }
             }
         ]
     }));
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { name, arguments: args } = request.params;
+
+        if (name === "db_prod_info") {
+            return asTextResult({
+                server: "llm-db-prod-mcp",
+                purpose: "Accesso SQL read-only al DB di produzione con anonimizzazione obbligatoria.",
+                capabilities: [
+                    "db_prod_read_anonymized: SELECT/WITH + anonimizzazione output"
+                ],
+                constraints: [
+                    "Nessuna write disponibile",
+                    "Solo query read-only validate",
+                    "Output sempre anonimizzato"
+                ]
+            });
+        }
 
         if (name !== "db_prod_read_anonymized") {
             throw new Error(`Tool non supportato: ${name}`);
@@ -164,8 +187,73 @@ function createErrorResponse(message) {
     };
 }
 
-const app = createMcpExpressApp({ host: config.server.host });
+function normalizeHeaderValue(rawValue) {
+    if (Array.isArray(rawValue)) {
+        return typeof rawValue[0] === "string" ? rawValue[0].trim() : "";
+    }
+    return typeof rawValue === "string" ? rawValue.trim() : "";
+}
+
+function normalizeOrigin(origin) {
+    try {
+        const parsed = new URL(origin);
+        const protocol = parsed.protocol.toLowerCase();
+        const host = parsed.hostname.toLowerCase();
+        if (!["http:", "https:"].includes(protocol) || !host) {
+            return null;
+        }
+        return parsed.port ? `${protocol}//${host}:${parsed.port}` : `${protocol}//${host}`;
+    } catch {
+        return null;
+    }
+}
+
+function isOriginAllowed(origin, allowedOrigins) {
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (!normalizedOrigin) return false;
+    for (const rawPattern of allowedOrigins) {
+        const pattern = String(rawPattern || "").trim().toLowerCase();
+        if (!pattern) continue;
+        if (pattern === normalizedOrigin) return true;
+        if (pattern.endsWith(":*")) {
+            const prefix = pattern.slice(0, -2);
+            if (normalizedOrigin.startsWith(`${prefix}:`)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function withOriginValidation(req, res, next) {
+    const origin = normalizeHeaderValue(req.headers.origin);
+    if (!origin) {
+        next();
+        return;
+    }
+    if (!isOriginAllowed(origin, config.server.allowedOrigins)) {
+        res.status(403).json(createErrorResponse("Forbidden: Origin not allowed"));
+        return;
+    }
+    res.set("Vary", "Origin");
+    res.set("Access-Control-Allow-Origin", origin);
+    next();
+}
+
+function sendMissingSession(res) {
+    res.status(400).json(createErrorResponse("Bad Request: Missing session ID"));
+}
+
+function sendUnknownSession(res) {
+    res.status(404).json(createErrorResponse("Not Found: Invalid or expired session ID"));
+}
+
+const app = createMcpExpressApp({
+    host: config.server.host,
+    allowedHosts: config.server.allowedHosts?.length ? config.server.allowedHosts : undefined
+});
 const transports = new Map();
+app.use(withOriginValidation);
 
 app.get("/health", (_req, res) => {
     res.json({
@@ -176,7 +264,9 @@ app.get("/health", (_req, res) => {
 });
 
 app.post(config.server.path, async (req, res) => {
-    const sessionId = normalizeSessionId(req.headers["mcp-session-id"]);
+    const rawSessionId = req.headers["mcp-session-id"];
+    const sessionId = normalizeSessionId(rawSessionId);
+    const hasSessionHeader = rawSessionId !== undefined;
     let transport;
 
     try {
@@ -186,10 +276,16 @@ app.post(config.server.path, async (req, res) => {
             return;
         }
 
+        if (hasSessionHeader && (!sessionId || !transports.has(sessionId))) {
+            sendUnknownSession(res);
+            return;
+        }
+
         if (!sessionId && isInitializeRequest(req.body)) {
             const server = createMcpServer();
             transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: () => randomUUID(),
+                enableJsonResponse: !config.server.sseEnabled,
                 onsessioninitialized: sid => {
                     if (normalizeSessionId(sid)) {
                         transports.set(sid, transport);
@@ -209,7 +305,7 @@ app.post(config.server.path, async (req, res) => {
             return;
         }
 
-        res.status(400).json(createErrorResponse("Bad Request: No valid session ID provided"));
+        sendMissingSession(res);
     } catch (error) {
         const message = error instanceof Error ? error.message : "Internal server error";
         console.error("POST MCP request failed:", message);
@@ -220,9 +316,20 @@ app.post(config.server.path, async (req, res) => {
 });
 
 app.get(config.server.path, async (req, res) => {
-    const sessionId = normalizeSessionId(req.headers["mcp-session-id"]);
+    if (!config.server.sseEnabled) {
+        res.status(405).set("Allow", "POST, DELETE").send("Method Not Allowed");
+        return;
+    }
+
+    const rawSessionId = req.headers["mcp-session-id"];
+    if (rawSessionId === undefined) {
+        sendMissingSession(res);
+        return;
+    }
+
+    const sessionId = normalizeSessionId(rawSessionId);
     if (!sessionId || !transports.has(sessionId)) {
-        res.status(400).send("Invalid or missing session ID");
+        sendUnknownSession(res);
         return;
     }
 
@@ -232,15 +339,21 @@ app.get(config.server.path, async (req, res) => {
         const message = error instanceof Error ? error.message : "Internal server error";
         console.error("GET MCP request failed:", message);
         if (!res.headersSent) {
-            res.status(500).send("Internal server error");
+            res.status(500).json(createErrorResponse("Internal server error"));
         }
     }
 });
 
 app.delete(config.server.path, async (req, res) => {
-    const sessionId = normalizeSessionId(req.headers["mcp-session-id"]);
+    const rawSessionId = req.headers["mcp-session-id"];
+    if (rawSessionId === undefined) {
+        sendMissingSession(res);
+        return;
+    }
+
+    const sessionId = normalizeSessionId(rawSessionId);
     if (!sessionId || !transports.has(sessionId)) {
-        res.status(400).send("Invalid or missing session ID");
+        sendUnknownSession(res);
         return;
     }
 
@@ -250,7 +363,7 @@ app.delete(config.server.path, async (req, res) => {
         const message = error instanceof Error ? error.message : "Internal server error";
         console.error("DELETE MCP request failed:", message);
         if (!res.headersSent) {
-            res.status(500).send("Internal server error");
+            res.status(500).json(createErrorResponse("Internal server error"));
         }
     }
 });
