@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 
 function toBool(value, fallback = false) {
     if (value === undefined || value === null || value === "") return fallback;
@@ -23,6 +24,41 @@ function parseCsvList(value, fallback) {
     return list.length ? list : [...fallback];
 }
 
+function uniqueLower(items) {
+    const seen = new Set();
+    const out = [];
+    for (const item of items) {
+        const raw = String(item || "").trim();
+        if (!raw) continue;
+        const lower = raw.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        out.push(raw);
+    }
+    return out;
+}
+
+function getLocalHostFallback() {
+    const hostname = String(os.hostname() || "").trim().toLowerCase();
+    const hostCandidates = uniqueLower([
+        "localhost",
+        "127.0.0.1",
+        "[::1]",
+        hostname
+    ]);
+
+    const originCandidates = [];
+    for (const host of hostCandidates) {
+        if (!host || host === "[::1]") continue;
+        originCandidates.push(`http://${host}:*`, `https://${host}:*`);
+    }
+
+    return {
+        allowedHosts: hostCandidates,
+        allowedOrigins: uniqueLower(originCandidates)
+    };
+}
+
 function toEnum(value, allowed, fallback, envName) {
     if (value === undefined || value === null || value === "") return fallback;
     const normalized = String(value).trim().toLowerCase();
@@ -34,6 +70,7 @@ function toEnum(value, allowed, fallback, envName) {
 }
 
 export function getProdConfig() {
+    const localFallback = getLocalHostFallback();
     const modelsDirRaw = process.env.MCP_MODELS_DIR || ".local/models";
     const modelsDir = path.isAbsolute(modelsDirRaw)
         ? modelsDirRaw
@@ -90,16 +127,11 @@ export function getProdConfig() {
             sseEnabled: toBool(process.env.MCP_PROD_SSE_ENABLED, false),
             allowedHosts: parseCsvList(
                 process.env.MCP_PROD_ALLOWED_HOSTS,
-                ["localhost", "127.0.0.1", "[::1]"]
+                localFallback.allowedHosts
             ),
             allowedOrigins: parseCsvList(
                 process.env.MCP_PROD_ALLOWED_ORIGINS,
-                [
-                    "http://localhost:*",
-                    "http://127.0.0.1:*",
-                    "https://localhost:*",
-                    "https://127.0.0.1:*"
-                ]
+                localFallback.allowedOrigins
             )
         }
     };

@@ -240,6 +240,13 @@ function withOriginValidation(req, res, next) {
     next();
 }
 
+function sendCorsPreflight(res) {
+    res.set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Accept, mcp-session-id");
+    res.set("Access-Control-Max-Age", "600");
+    res.status(204).send();
+}
+
 function sendMissingSession(res) {
     res.status(400).json(createErrorResponse("Bad Request: Missing session ID"));
 }
@@ -254,6 +261,9 @@ const app = createMcpExpressApp({
 });
 const transports = new Map();
 app.use(withOriginValidation);
+app.options(config.server.path, (_req, res) => {
+    sendCorsPreflight(res);
+});
 
 app.get("/health", (_req, res) => {
     res.json({
