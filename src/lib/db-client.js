@@ -32,7 +32,15 @@ async function getPool(connectionString) {
     if (!poolPromise) {
         const pool = new sql.ConnectionPool(connectionString);
         disableSniForIpServer(pool);
-        poolPromise = pool.connect();
+        poolPromise = pool.connect().catch(async error => {
+            poolPromise = undefined;
+            try {
+                await pool.close();
+            } catch {
+                // Ignore close failures: the original connect error is the actionable signal.
+            }
+            throw error;
+        });
     }
     return poolPromise;
 }
