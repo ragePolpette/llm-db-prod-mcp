@@ -43,6 +43,7 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
   - `hybrid`: tenta classificazione campi con LLM locale, fallback euristico.
   - `heuristic`: classificazione solo con regole locali.
   - `llm`: classificazione solo LLM (fallisce se LLM non disponibile).
+- Default-deny anonimization: colonne stringa non riconosciute come tecniche/safe vengono pseudonimizzate comunque (`TEXT_*`) invece di passare in chiaro.
 - `ANON_HASH_SALT` (obbligatorio, segreto stabile): salt usato nell'hash deterministico. Stesso input+salt => stessa pseudonimizzazione nel tempo. Il server rifiuta l'avvio se manca o se resta il placeholder.
 - `ANON_MODEL_BASE_URL` (default `http://127.0.0.1:11434`)
 - `ANON_MODEL_NAME` (default `qwen2.5:3b-instruct`)

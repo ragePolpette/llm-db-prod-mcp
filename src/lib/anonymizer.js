@@ -7,6 +7,46 @@ const VAT_REGEX = /\b\d{11,16}\b/g;
 
 const KIND_VALUES = new Set(["email", "phone", "cf", "vat", "name", "org", "address", "city", "text"]);
 const NONE_KIND = "__none__";
+const SAFE_EXACT_KEYS = new Set([
+    "id",
+    "ids",
+    "rownum",
+    "row_num",
+    "count",
+    "total",
+    "status",
+    "stato",
+    "type",
+    "tipo",
+    "flag",
+    "enabled",
+    "active",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+    "timestamp",
+    "ts",
+    "date",
+    "data"
+]);
+const SAFE_KEY_TOKENS = new Set([
+    "id",
+    "count",
+    "total",
+    "status",
+    "stato",
+    "type",
+    "tipo",
+    "flag",
+    "enabled",
+    "active",
+    "created",
+    "updated",
+    "deleted",
+    "timestamp",
+    "date",
+    "data"
+]);
 
 const EXACT_KEY_KIND = new Map([
     ["email", "email"],
@@ -85,6 +125,21 @@ function getHashSalt(cfg) {
         throw new Error("ANON_HASH_SALT mancante: impossibile anonimizzare in modo deterministico.");
     }
     return raw;
+}
+
+function isExplicitlySafeKey(key) {
+    const normalized = normalizeKey(key);
+    if (!normalized) return false;
+    if (SAFE_EXACT_KEYS.has(normalized)) return true;
+
+    const tokens = tokenSetFromKey(normalized);
+    if (tokens.size === 0) return false;
+    for (const token of tokens) {
+        if (!SAFE_KEY_TOKENS.has(token)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 function stableDigest(salt, key, value, len = 8) {
@@ -221,6 +276,16 @@ function resolveKindForKey(key, fieldKindMap) {
     return inferKindHeuristic(key);
 }
 
+function resolveKindForValue(key, value, fieldKindMap) {
+    const kind = resolveKindForKey(key, fieldKindMap);
+    if (kind) return kind;
+    if (isExplicitlySafeKey(key)) return null;
+    if (typeof value === "string" && value.trim()) {
+        return "text";
+    }
+    return null;
+}
+
 function extractJsonFromText(text) {
     if (!text) return null;
     const trimmed = String(text).trim();
@@ -298,13 +363,13 @@ function deterministicFallback(rows, cfg, fieldKindMap) {
             const value = out[key];
             if (value === null || value === undefined) continue;
 
-            const kind = resolveKindForKey(key, fieldKindMap);
+            const kind = resolveKindForValue(key, value, fieldKindMap);
             if (kind) {
                 out[key] = replaceByKind(kind, key, value, cfg);
                 continue;
             }
 
-            if (typeof value === "string") {
+            if (typeof value === "string" && !isExplicitlySafeKey(key)) {
                 out[key] = maskInlineWithHashes(value, cfg);
             }
         }
@@ -324,7 +389,7 @@ function normalizeRowsShape(sourceRows, candidateRows, fieldKindMap, cfg) {
         const out = {};
 
         for (const key of Object.keys(source)) {
-            const kind = resolveKindForKey(key, fieldKindMap);
+            const kind = resolveKindForValue(key, source[key], fieldKindMap);
             if (!kind) {
                 out[key] = source[key];
                 continue;
