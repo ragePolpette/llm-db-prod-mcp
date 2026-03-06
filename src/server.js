@@ -7,6 +7,7 @@ import { getProdConfig } from "./lib/config.js";
 import { assertReadOnlySql } from "./lib/sql-guard.js";
 import { runReadQuery } from "./lib/db-client.js";
 import { anonymizeRows } from "./lib/anonymizer.js";
+import { evaluateOrigin } from "./lib/origin-validation.js";
 import { runProdPreflight } from "./lib/preflight.js";
 
 const config = getProdConfig();
@@ -187,56 +188,19 @@ function createErrorResponse(message) {
     };
 }
 
-function normalizeHeaderValue(rawValue) {
-    if (Array.isArray(rawValue)) {
-        return typeof rawValue[0] === "string" ? rawValue[0].trim() : "";
-    }
-    return typeof rawValue === "string" ? rawValue.trim() : "";
-}
-
-function normalizeOrigin(origin) {
-    try {
-        const parsed = new URL(origin);
-        const protocol = parsed.protocol.toLowerCase();
-        const host = parsed.hostname.toLowerCase();
-        if (!["http:", "https:"].includes(protocol) || !host) {
-            return null;
-        }
-        return parsed.port ? `${protocol}//${host}:${parsed.port}` : `${protocol}//${host}`;
-    } catch {
-        return null;
-    }
-}
-
-function isOriginAllowed(origin, allowedOrigins) {
-    const normalizedOrigin = normalizeOrigin(origin);
-    if (!normalizedOrigin) return false;
-    for (const rawPattern of allowedOrigins) {
-        const pattern = String(rawPattern || "").trim().toLowerCase();
-        if (!pattern) continue;
-        if (pattern === normalizedOrigin) return true;
-        if (pattern.endsWith(":*")) {
-            const prefix = pattern.slice(0, -2);
-            if (normalizedOrigin.startsWith(`${prefix}:`)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 function withOriginValidation(req, res, next) {
-    const origin = normalizeHeaderValue(req.headers.origin);
-    if (!origin) {
+    if (req.path === "/health") {
         next();
         return;
     }
-    if (!isOriginAllowed(origin, config.server.allowedOrigins)) {
-        res.status(403).json(createErrorResponse("Forbidden: Origin not allowed"));
+
+    const result = evaluateOrigin(req.headers, config.server.allowedOrigins);
+    if (!result.ok) {
+        res.status(result.status).json(createErrorResponse(result.message));
         return;
     }
     res.set("Vary", "Origin");
-    res.set("Access-Control-Allow-Origin", origin);
+    res.set("Access-Control-Allow-Origin", result.origin);
     next();
 }
 

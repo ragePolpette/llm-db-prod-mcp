@@ -60,6 +60,7 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
 - `MCP_PROD_SSE_ENABLED` (default `false`; se `false`, `GET /mcp` risponde `405`)
 - `MCP_PROD_ALLOWED_HOSTS` (default `localhost,127.0.0.1,[::1]`)
 - `MCP_PROD_ALLOWED_ORIGINS` (default localhost loopback con wildcard porta)
+  - Le richieste a `/mcp` senza header `Origin` vengono rifiutate; `Origin` deve essere presente e allowlisted.
 - `MCP_MODELS_DIR` (default `.local/models`)
 - `OLLAMA_MODELS` (default `.local/models/ollama`)
 
