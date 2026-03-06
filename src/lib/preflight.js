@@ -1,4 +1,5 @@
 import { runReadQuery } from "./db-client.js";
+import { runWithTimeout } from "./timeout.js";
 
 function isLoopbackHost(host) {
     const normalized = String(host || "").trim().toLowerCase();
@@ -145,18 +146,23 @@ async function ensureLocalModelIsInstalled(anonymizer) {
     }
 }
 
-async function ensureDbConnection(connectionString) {
+async function ensureDbConnection(connectionString, queryTimeoutMs, preflightTimeoutMs) {
     const conn = String(connectionString || "").trim();
     if (!conn) {
         throw new Error("Connection string non configurata (DB_PROD_CONNECTION_STRING).");
     }
 
-    await runReadQuery({
-        connectionString: conn,
-        sqlText: "SELECT TOP 1 1 AS ok;",
-        parameters: {},
-        maxRows: 1
-    });
+    await runWithTimeout(
+        () => runReadQuery({
+            connectionString: conn,
+            sqlText: "SELECT TOP 1 1 AS ok;",
+            parameters: {},
+            maxRows: 1,
+            queryTimeoutMs
+        }),
+        preflightTimeoutMs,
+        "DB preflight"
+    );
 }
 
 export async function runProdPreflight(config) {
@@ -165,6 +171,6 @@ export async function runProdPreflight(config) {
             `MCP_PROD_HOST deve essere loopback locale (127.0.0.1/localhost/::1). Valore corrente: ${config?.server?.host}`
         );
     }
-    await ensureDbConnection(config?.connectionString);
+    await ensureDbConnection(config?.connectionString, config?.queryTimeoutMs, config?.preflightTimeoutMs);
     await ensureLocalModelIsInstalled(config?.anonymizer);
 }

@@ -51,3 +51,16 @@ test("getProdConfig accepts explicit anonymization salt", () => {
         assert.equal(cfg.anonymizer.hashSalt, "stable-secret-for-tests");
     });
 });
+
+test("getProdConfig exposes bounded preflight timeout", () => {
+    withEnv(
+        {
+            ANON_HASH_SALT: "stable-secret-for-tests",
+            DB_PROD_PREFLIGHT_TIMEOUT_MS: "15000"
+        },
+        () => {
+            const cfg = getProdConfig();
+            assert.equal(cfg.preflightTimeoutMs, 15000);
+        }
+    );
+});
