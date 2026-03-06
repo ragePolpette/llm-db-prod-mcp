@@ -7,6 +7,7 @@ const VAT_REGEX = /\b\d{11,16}\b/g;
 
 const KIND_VALUES = new Set(["email", "phone", "cf", "vat", "name", "org", "address", "city", "text"]);
 const NONE_KIND = "__none__";
+const LLM_KIND_CACHE_MAX_SIZE = 512;
 const SAFE_EXACT_KEYS = new Set([
     "id",
     "ids",
@@ -250,14 +251,26 @@ function normalizeKind(kind) {
 function getCachedKind(normalizedKey) {
     if (!LLM_KIND_CACHE.has(normalizedKey)) return null;
     const value = LLM_KIND_CACHE.get(normalizedKey);
+    LLM_KIND_CACHE.delete(normalizedKey);
+    LLM_KIND_CACHE.set(normalizedKey, value);
     return value === NONE_KIND ? null : value;
 }
 
 function setCachedKind(normalizedKey, kind) {
     const normalizedKind = normalizeKind(kind);
-    if (!LLM_KIND_CACHE.has(normalizedKey)) {
+    if (LLM_KIND_CACHE.has(normalizedKey)) {
+        LLM_KIND_CACHE.delete(normalizedKey);
         LLM_KIND_CACHE.set(normalizedKey, normalizedKind);
+        return;
     }
+
+    if (LLM_KIND_CACHE.size >= LLM_KIND_CACHE_MAX_SIZE) {
+        const oldestKey = LLM_KIND_CACHE.keys().next().value;
+        if (oldestKey !== undefined) {
+            LLM_KIND_CACHE.delete(oldestKey);
+        }
+    }
+    LLM_KIND_CACHE.set(normalizedKey, normalizedKind);
 }
 
 function resolveKindForKey(key, fieldKindMap) {
@@ -627,3 +640,14 @@ export async function anonymizeRows(rows, cfg) {
         return deterministicFallback(rows, cfg, fieldKindMap);
     }
 }
+
+export const __anonymizerTestUtils = {
+    cacheMaxSize: LLM_KIND_CACHE_MAX_SIZE,
+    resetKindCache() {
+        LLM_KIND_CACHE.clear();
+    },
+    getKindCacheKeys() {
+        return [...LLM_KIND_CACHE.keys()];
+    },
+    setCachedKind
+};
