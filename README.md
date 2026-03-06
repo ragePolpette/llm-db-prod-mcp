@@ -32,7 +32,7 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
 - `DB_PROD_MAX_ROWS` (default `200`, hard cap `250`)
 - `DB_PROD_QUERY_TIMEOUT_MS` (default `9000`, min `1000`, max `10000`)
 - `DB_PROD_PREFLIGHT_TIMEOUT_MS` (default `8000`, min `1000`, max `30000`): timeout esplicito per il check DB eseguito allo startup.
-- `DB_PROD_MAX_RESULT_BYTES` (default `5242880`, min `131072`, max `52428800`)
+- `DB_PROD_MAX_RESULT_BYTES` (default `5242880`, min `131072`, hard cap `5242880`): valori piu alti vengono clampati a 5MB in codice.
 - `DB_PROD_TEXTSIZE_BYTES` (default `262144`, min `4096`, max `1048576`)
 - `DB_PROD_MAX_ROW_BYTES` (default `262144`, min `4096`, max `10485760`)
 - `ANON_MODEL_PROVIDER` (default `ollama`, ammessi `ollama|deterministic`)

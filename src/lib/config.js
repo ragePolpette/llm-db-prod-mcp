@@ -138,7 +138,7 @@ export function getProdConfig() {
         maxRows: clamp(toInt(process.env.DB_PROD_MAX_ROWS, 200), 1, 250),
         queryTimeoutMs: clamp(toInt(process.env.DB_PROD_QUERY_TIMEOUT_MS, 9000), 1000, 10000),
         preflightTimeoutMs: clamp(toInt(process.env.DB_PROD_PREFLIGHT_TIMEOUT_MS, 8000), 1000, 30000),
-        maxResultBytes: clamp(toInt(process.env.DB_PROD_MAX_RESULT_BYTES, 5 * 1024 * 1024), 128 * 1024, 50 * 1024 * 1024),
+        maxResultBytes: clamp(toInt(process.env.DB_PROD_MAX_RESULT_BYTES, 5 * 1024 * 1024), 128 * 1024, 5 * 1024 * 1024),
         textSizeBytes: clamp(toInt(process.env.DB_PROD_TEXTSIZE_BYTES, 262144), 4096, 1048576),
         maxRowBytes: clamp(toInt(process.env.DB_PROD_MAX_ROW_BYTES, 262144), 4096, 10 * 1024 * 1024),
         anonymizer: {

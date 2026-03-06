@@ -64,3 +64,16 @@ test("getProdConfig exposes bounded preflight timeout", () => {
         }
     );
 });
+
+test("getProdConfig clamps max result bytes to hard 5MB cap", () => {
+    withEnv(
+        {
+            ANON_HASH_SALT: "stable-secret-for-tests",
+            DB_PROD_MAX_RESULT_BYTES: String(50 * 1024 * 1024)
+        },
+        () => {
+            const cfg = getProdConfig();
+            assert.equal(cfg.maxResultBytes, 5 * 1024 * 1024);
+        }
+    );
+});
