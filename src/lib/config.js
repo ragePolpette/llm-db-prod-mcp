@@ -1,5 +1,6 @@
 import path from "node:path";
 import os from "node:os";
+import fs from "node:fs";
 
 function toBool(value, fallback = false) {
     if (value === undefined || value === null || value === "") return fallback;
@@ -59,6 +60,37 @@ function getLocalHostFallback() {
     };
 }
 
+let envLoaded = false;
+
+function loadDotEnvFromCwd() {
+    if (envLoaded) return;
+    envLoaded = true;
+
+    const envPath = path.resolve(process.cwd(), ".env");
+    if (!fs.existsSync(envPath)) return;
+
+    const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+    for (const rawLine of lines) {
+        const line = String(rawLine || "").trim();
+        if (!line || line.startsWith("#")) continue;
+        const idx = line.indexOf("=");
+        if (idx <= 0) continue;
+
+        const key = line.slice(0, idx).trim();
+        let value = line.slice(idx + 1);
+        if (
+            (value.startsWith("\"") && value.endsWith("\"")) ||
+            (value.startsWith("'") && value.endsWith("'"))
+        ) {
+            value = value.slice(1, -1);
+        }
+
+        if (!Object.prototype.hasOwnProperty.call(process.env, key) || process.env[key] === "") {
+            process.env[key] = value;
+        }
+    }
+}
+
 function toEnum(value, allowed, fallback, envName) {
     if (value === undefined || value === null || value === "") return fallback;
     const normalized = String(value).trim().toLowerCase();
@@ -70,6 +102,7 @@ function toEnum(value, allowed, fallback, envName) {
 }
 
 export function getProdConfig() {
+    loadDotEnvFromCwd();
     const localFallback = getLocalHostFallback();
     const modelsDirRaw = process.env.MCP_MODELS_DIR || ".local/models";
     const modelsDir = path.isAbsolute(modelsDirRaw)

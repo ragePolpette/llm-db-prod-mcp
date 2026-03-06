@@ -269,7 +269,9 @@ app.get("/health", (_req, res) => {
     res.json({
         status: "ok",
         server: "llm-db-prod-mcp",
-        endpoint: config.server.path
+        endpoint: config.server.path,
+        pid: process.pid,
+        uptimeSec: Math.floor(process.uptime())
     });
 });
 
