@@ -396,7 +396,17 @@ function normalizeRowsShape(sourceRows, candidateRows, fieldKindMap, cfg) {
             }
 
             if (Object.prototype.hasOwnProperty.call(candidate, key) && candidate[key] !== undefined) {
-                out[key] = candidate[key];
+                const candidateValue = candidate[key];
+                const sourceValue = source[key];
+                const echoedUnchanged =
+                    candidateValue === sourceValue ||
+                    (typeof candidateValue === "string" &&
+                        typeof sourceValue === "string" &&
+                        candidateValue.trim() === sourceValue.trim());
+
+                out[key] = echoedUnchanged
+                    ? replaceByKind(kind, key, sourceValue, cfg)
+                    : candidateValue;
             } else {
                 out[key] = replaceByKind(kind, key, source[key], cfg);
             }

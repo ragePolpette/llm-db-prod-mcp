@@ -36,3 +36,44 @@ test("known pii keys still use specific deterministic replacements", async () =>
     assert.match(anonymized[0].email, /^user_[a-z0-9]+@example\.invalid$/);
     assert.match(anonymized[0].telefono, /^\+39\d+$/);
 });
+
+test("llm anonymizer falls back when sensitive values are echoed unchanged", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+        ok: true,
+        async json() {
+            return {
+                message: {
+                    content: JSON.stringify({
+                        rows: [
+                            {
+                                email: "user@example.com",
+                                RagSoc: "ACME SPA"
+                            }
+                        ]
+                    })
+                }
+            };
+        }
+    });
+
+    try {
+        const rows = [{ email: "user@example.com", RagSoc: "ACME SPA" }];
+        const anonymized = await anonymizeRows(rows, {
+            ...baseCfg,
+            mode: "llm-strict",
+            provider: "ollama",
+            fieldIdentification: "heuristic",
+            baseUrl: "http://127.0.0.1:11434",
+            model: "qwen2.5:3b-instruct",
+            failOpen: false
+        });
+
+        assert.notEqual(anonymized[0].email, "user@example.com");
+        assert.notEqual(anonymized[0].RagSoc, "ACME SPA");
+        assert.match(anonymized[0].email, /^user_[a-z0-9]+@example\.invalid$/);
+        assert.match(anonymized[0].RagSoc, /^TEXT_/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
