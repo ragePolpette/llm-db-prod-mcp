@@ -16,6 +16,23 @@ function clamp(value, min, max) {
     return Math.max(min, Math.min(value, max));
 }
 
+function normalizeSecret(value) {
+    return String(value || "").trim();
+}
+
+function assertRequiredSecret(value, envName, rejectedPlaceholders = []) {
+    const secret = normalizeSecret(value);
+    if (!secret) {
+        throw new Error(`${envName} obbligatoria: avvio rifiutato senza secret esplicito.`);
+    }
+
+    const normalized = secret.toLowerCase();
+    if (rejectedPlaceholders.some(candidate => normalized === candidate)) {
+        throw new Error(`${envName} non valida: sostituisci il placeholder con un secret reale.`);
+    }
+    return secret;
+}
+
 function parseCsvList(value, fallback) {
     if (value === undefined || value === null || value === "") return [...fallback];
     const list = String(value)
@@ -142,7 +159,10 @@ export function getProdConfig() {
                 "hybrid",
                 "ANON_FIELD_IDENTIFICATION"
             ),
-            hashSalt: process.env.ANON_HASH_SALT || "",
+            hashSalt: assertRequiredSecret(process.env.ANON_HASH_SALT, "ANON_HASH_SALT", [
+                "change-me-stable-secret",
+                "llm-db-prod-mcp"
+            ]),
             baseUrl: process.env.ANON_MODEL_BASE_URL || "http://127.0.0.1:11434",
             model: process.env.ANON_MODEL_NAME || "",
             failOpen: toBool(process.env.ANON_FAIL_OPEN, false),

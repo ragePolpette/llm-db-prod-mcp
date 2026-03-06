@@ -7,7 +7,6 @@ const VAT_REGEX = /\b\d{11,16}\b/g;
 
 const KIND_VALUES = new Set(["email", "phone", "cf", "vat", "name", "org", "address", "city", "text"]);
 const NONE_KIND = "__none__";
-const DEFAULT_HASH_SALT = "llm-db-prod-mcp";
 
 const EXACT_KEY_KIND = new Map([
     ["email", "email"],
@@ -82,7 +81,10 @@ function hasAnyToken(tokens, candidates) {
 
 function getHashSalt(cfg) {
     const raw = String(cfg?.hashSalt || "").trim();
-    return raw || DEFAULT_HASH_SALT;
+    if (!raw) {
+        throw new Error("ANON_HASH_SALT mancante: impossibile anonimizzare in modo deterministico.");
+    }
+    return raw;
 }
 
 function stableDigest(salt, key, value, len = 8) {

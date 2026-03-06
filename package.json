@@ -5,7 +5,8 @@
   "type": "module",
   "description": "MCP server for production SQL Server read-only access with mandatory anonymization via local model.",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
