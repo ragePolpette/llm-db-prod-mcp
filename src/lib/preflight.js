@@ -153,12 +153,13 @@ async function ensureDbConnection(connectionString, queryTimeoutMs, preflightTim
     }
 
     await runWithTimeout(
-        () => runReadQuery({
+        signal => runReadQuery({
             connectionString: conn,
             sqlText: "SELECT TOP 1 1 AS ok;",
             parameters: {},
             maxRows: 1,
-            queryTimeoutMs
+            queryTimeoutMs,
+            abortSignal: signal
         }),
         preflightTimeoutMs,
         "DB preflight"

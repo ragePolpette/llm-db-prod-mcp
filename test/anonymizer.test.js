@@ -82,6 +82,21 @@ test("llm anonymizer falls back when sensitive values are echoed unchanged", asy
     }
 });
 
+test("llm anonymizer falls back when sensitive values differ only by formatting", () => {
+    assert.equal(
+        __anonymizerTestUtils.isUnsafeEcho(" user@example.com ", "user@example.com"),
+        true
+    );
+    assert.equal(
+        __anonymizerTestUtils.isUnsafeEcho("ACME, S.P.A.", "Acme SPA"),
+        true
+    );
+    assert.equal(
+        __anonymizerTestUtils.isUnsafeEcho("masked-value", "source-value"),
+        false
+    );
+});
+
 test("llm kind cache evicts the oldest key when max size is reached", () => {
     const maxSize = __anonymizerTestUtils.cacheMaxSize;
 

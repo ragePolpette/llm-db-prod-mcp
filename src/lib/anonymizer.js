@@ -367,6 +367,28 @@ function maskInlineWithHashes(value, cfg) {
         .replace(PHONE_TEXT_REGEX, (match) => toPhoneFromDigest(salt, "inline_phone", match));
 }
 
+function normalizeSensitiveString(value) {
+    return String(value || "")
+        .normalize("NFKC")
+        .toLowerCase()
+        .replace(/[\s\p{P}\p{S}_]+/gu, "");
+}
+
+function isUnsafeEcho(candidateValue, sourceValue) {
+    if (candidateValue === sourceValue) return true;
+    if (typeof candidateValue !== "string" || typeof sourceValue !== "string") {
+        return false;
+    }
+
+    if (candidateValue.trim() === sourceValue.trim()) {
+        return true;
+    }
+
+    const normalizedCandidate = normalizeSensitiveString(candidateValue);
+    const normalizedSource = normalizeSensitiveString(sourceValue);
+    return normalizedCandidate.length > 0 && normalizedCandidate === normalizedSource;
+}
+
 function deterministicFallback(rows, cfg, fieldKindMap) {
     return rows.map((row) => {
         if (!isObject(row)) return row;
@@ -411,11 +433,7 @@ function normalizeRowsShape(sourceRows, candidateRows, fieldKindMap, cfg) {
             if (Object.prototype.hasOwnProperty.call(candidate, key) && candidate[key] !== undefined) {
                 const candidateValue = candidate[key];
                 const sourceValue = source[key];
-                const echoedUnchanged =
-                    candidateValue === sourceValue ||
-                    (typeof candidateValue === "string" &&
-                        typeof sourceValue === "string" &&
-                        candidateValue.trim() === sourceValue.trim());
+                const echoedUnchanged = isUnsafeEcho(candidateValue, sourceValue);
 
                 out[key] = echoedUnchanged
                     ? replaceByKind(kind, key, sourceValue, cfg)
@@ -643,6 +661,7 @@ export async function anonymizeRows(rows, cfg) {
 
 export const __anonymizerTestUtils = {
     cacheMaxSize: LLM_KIND_CACHE_MAX_SIZE,
+    isUnsafeEcho,
     resetKindCache() {
         LLM_KIND_CACHE.clear();
     },

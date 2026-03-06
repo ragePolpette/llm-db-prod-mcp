@@ -1,8 +1,24 @@
-import sql from "mssql";
 import { isIP } from "node:net";
 import { buildExecutionSql } from "./execution-sql.js";
 
 let poolPromise;
+let sqlModulePromise;
+let poolFactory;
+
+async function getSqlModule() {
+    if (!sqlModulePromise) {
+        sqlModulePromise = import("mssql").then(module => module.default ?? module);
+    }
+    return sqlModulePromise;
+}
+
+async function createPool(connectionString) {
+    if (poolFactory) {
+        return await poolFactory(connectionString);
+    }
+    const sqlModule = await getSqlModule();
+    return new sqlModule.ConnectionPool(connectionString);
+}
 
 function mapParameters(request, parameters) {
     if (!parameters || typeof parameters !== "object") return;
@@ -31,7 +47,7 @@ async function getPool(connectionString) {
         throw new Error("Connection string non configurata (DB_PROD_CONNECTION_STRING).");
     }
     if (!poolPromise) {
-        const pool = new sql.ConnectionPool(connectionString);
+        const pool = await createPool(connectionString);
         disableSniForIpServer(pool);
         poolPromise = pool.connect().catch(async error => {
             poolPromise = undefined;
@@ -78,7 +94,8 @@ export async function runReadQuery({
     queryTimeoutMs,
     maxResultBytes,
     textSizeBytes,
-    maxRowBytes
+    maxRowBytes,
+    abortSignal
 }) {
     const pool = await getPool(connectionString);
     const request = pool.request();
@@ -97,17 +114,41 @@ export async function runReadQuery({
         const byteCap = Number.isFinite(maxResultBytes) && maxResultBytes > 0 ? maxResultBytes : 5 * 1024 * 1024;
         const rowByteCap = Number.isFinite(maxRowBytes) && maxRowBytes > 0 ? maxRowBytes : 262144;
         let totalBytes = 0;
+        let cancelledByAbort = false;
 
         const done = payload => {
             if (settled) return;
             settled = true;
+            if (abortSignal && abortListener) {
+                abortSignal.removeEventListener("abort", abortListener);
+            }
             resolve(payload);
         };
         const fail = error => {
             if (settled) return;
             settled = true;
+            if (abortSignal && abortListener) {
+                abortSignal.removeEventListener("abort", abortListener);
+            }
             reject(error);
         };
+
+        const abortListener = () => {
+            cancelledByAbort = true;
+            try {
+                request.cancel();
+            } catch {
+                // Ignore cancellation errors from a request that has already completed.
+            }
+        };
+
+        if (abortSignal) {
+            if (abortSignal.aborted) {
+                abortListener();
+            } else {
+                abortSignal.addEventListener("abort", abortListener, { once: true });
+            }
+        }
 
         request.on("row", row => {
             const rowBytes = estimateRowBytes(row);
@@ -141,7 +182,9 @@ export async function runReadQuery({
         });
 
         request.on("error", error => {
-            const isExpectedCancel = cancelledByLimit && (error?.code === "ECANCEL" || /cancel/i.test(String(error?.message || "")));
+            const isExpectedCancel =
+                (cancelledByLimit || cancelledByAbort) &&
+                (error?.code === "ECANCEL" || /cancel/i.test(String(error?.message || "")));
             if (isExpectedCancel) return;
             fail(error);
         });
@@ -155,11 +198,25 @@ export async function runReadQuery({
         });
 
         request.query(executionSql).catch(error => {
-            const isExpectedCancel = cancelledByLimit && (error?.code === "ECANCEL" || /cancel/i.test(String(error?.message || "")));
+            const isExpectedCancel =
+                (cancelledByLimit || cancelledByAbort) &&
+                (error?.code === "ECANCEL" || /cancel/i.test(String(error?.message || "")));
             if (isExpectedCancel) return;
             fail(error);
         });
     });
 }
+
+export const __dbClientTestUtils = {
+    reset() {
+        poolPromise = undefined;
+        poolFactory = undefined;
+        sqlModulePromise = undefined;
+    },
+    setPoolFactory(factory) {
+        poolPromise = undefined;
+        poolFactory = factory;
+    }
+};
 
 
