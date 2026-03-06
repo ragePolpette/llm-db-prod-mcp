@@ -86,9 +86,8 @@ export async function runReadQuery({
     }
     mapParameters(request, parameters);
     request.stream = true;
-    const rowCountLimit = Math.max(1, Math.floor(maxRows) + 1);
     const safeTextSize = Number.isFinite(textSizeBytes) && textSizeBytes > 0 ? Math.floor(textSizeBytes) : 262144;
-    const executionSql = `SET ROWCOUNT ${rowCountLimit}; SET TEXTSIZE ${safeTextSize}; ${sqlText}; SET ROWCOUNT 0;`;
+    const executionSql = `SET TEXTSIZE ${safeTextSize}; ${sqlText};`;
 
     return await new Promise((resolve, reject) => {
         const rows = [];

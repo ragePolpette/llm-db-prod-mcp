@@ -9,7 +9,7 @@ Regole implementate:
 - Hard cap `maxRows` a `250`.
 - Timeout query DB configurabile (default `9000ms`, max `10000ms`).
 - Hard cap payload risultato (default `5MB`) durante stream.
-- Limite server-side su righe (`SET ROWCOUNT`) e dimensione LOB (`SET TEXTSIZE`).
+- Limite su righe tramite stream cancellation server-side e su dimensione LOB tramite `SET TEXTSIZE`.
 
 ## Setup
 
@@ -69,7 +69,7 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
   - anonimizza risultato prima della risposta
   - valida SQL in ingresso (single statement reale, parentesi/commenti/stringhe bilanciate, blocco keyword/pattern pericolosi)
   - rifiuta parametri non validi (nome parametro e tipo valore)
-  - applica limitazione righe/dimensione server-side (`ROWCOUNT`/`TEXTSIZE`) + controllo durante stream
+  - applica limitazione dimensione LOB (`TEXTSIZE`) + controllo/stop durante stream quando supera i limiti di righe o payload
 - `db_prod_info`
   - descrive scopo operativo e limiti di sicurezza (read-only + anonimizzazione)
 
