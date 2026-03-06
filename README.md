@@ -71,6 +71,7 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
   - esegue query read-only
   - anonimizza risultato prima della risposta
   - valida SQL in ingresso (single statement reale, parentesi/commenti/stringhe bilanciate, blocco keyword/pattern pericolosi)
+  - costruisce il batch eseguito solo a partire dalla query gia validata (`SET TEXTSIZE <n>; <SELECT/WITH validata>;`)
   - rifiuta parametri non validi (nome parametro e tipo valore)
   - applica limitazione dimensione LOB (`TEXTSIZE`) + controllo/stop durante stream quando supera i limiti di righe o payload
 - `db_prod_info`

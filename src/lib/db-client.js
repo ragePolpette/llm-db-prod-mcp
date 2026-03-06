@@ -1,5 +1,6 @@
 import sql from "mssql";
 import { isIP } from "node:net";
+import { buildExecutionSql } from "./execution-sql.js";
 
 let poolPromise;
 
@@ -86,8 +87,7 @@ export async function runReadQuery({
     }
     mapParameters(request, parameters);
     request.stream = true;
-    const safeTextSize = Number.isFinite(textSizeBytes) && textSizeBytes > 0 ? Math.floor(textSizeBytes) : 262144;
-    const executionSql = `SET TEXTSIZE ${safeTextSize}; ${sqlText};`;
+    const executionSql = buildExecutionSql(sqlText, textSizeBytes);
 
     return await new Promise((resolve, reject) => {
         const rows = [];
