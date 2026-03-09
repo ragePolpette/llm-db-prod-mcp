@@ -1,0 +1,60 @@
+# Environment and local config
+.env
+.env.*
+!.env.example
+config.local.*
+!config.local.example.*
+scripts/local/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build and runtime
+dist/
+build/
+coverage/
+tmp/
+*.log
+*.out
+*.err
+.cache/
+
+# Local data and models
+.local/
+models/
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.parquet
+*.feather
+*.npy
+*.npz
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.gguf
+*.safetensors
+*.tflite
+*.dump
+*.bak
+
+# Secrets/certs
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
