@@ -41,20 +41,20 @@ test("known pii keys still use specific deterministic replacements", async () =>
     assert.match(anonymized[0].telefono, /^\+39\d+$/);
 });
 
-test("llm anonymizer falls back when sensitive values are echoed unchanged", async () => {
+test("llm-strict uses the model only to classify fields and keeps masking deterministic", async () => {
     const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
     globalThis.fetch = async () => ({
         ok: true,
         async json() {
+            fetchCalls += 1;
             return {
                 message: {
                     content: JSON.stringify({
-                        rows: [
-                            {
-                                email: "user@example.com",
-                                RagSoc: "ACME SPA"
-                            }
-                        ]
+                        fields: {
+                            destinatario: "email",
+                            RagSoc: "org"
+                        }
                     })
                 }
             };
@@ -62,7 +62,7 @@ test("llm anonymizer falls back when sensitive values are echoed unchanged", asy
     });
 
     try {
-        const rows = [{ email: "user@example.com", RagSoc: "ACME SPA" }];
+        const rows = [{ destinatario: "user@example.com", RagSoc: "ACME SPA" }];
         const anonymized = await anonymizeRows(rows, {
             ...baseCfg,
             mode: "llm-strict",
@@ -73,10 +73,39 @@ test("llm anonymizer falls back when sensitive values are echoed unchanged", asy
             failOpen: false
         });
 
-        assert.notEqual(anonymized[0].email, "user@example.com");
+        assert.equal(fetchCalls, 1);
+        assert.notEqual(anonymized[0].destinatario, "user@example.com");
         assert.notEqual(anonymized[0].RagSoc, "ACME SPA");
-        assert.match(anonymized[0].email, /^user_[a-z0-9]+@example\.invalid$/);
-        assert.match(anonymized[0].RagSoc, /^TEXT_/);
+        assert.match(anonymized[0].destinatario, /^user_[a-z0-9]+@example\.invalid$/);
+        assert.match(anonymized[0].RagSoc, /^ORG_/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("llm-strict fails closed when field identification is unavailable", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+        throw new Error("ollama offline");
+    };
+
+    try {
+        await assert.rejects(
+            () =>
+                anonymizeRows(
+                    [{ destinatario: "user@example.com" }],
+                    {
+                        ...baseCfg,
+                        mode: "llm-strict",
+                        provider: "ollama",
+                        fieldIdentification: "heuristic",
+                        baseUrl: "http://127.0.0.1:11434",
+                        model: "qwen2.5:3b-instruct",
+                        failOpen: false
+                    }
+                ),
+            /Field identification LLM fallita/
+        );
     } finally {
         globalThis.fetch = originalFetch;
     }

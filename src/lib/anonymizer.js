@@ -315,20 +315,6 @@ function extractJsonFromText(text) {
     return null;
 }
 
-function coerceRowsArray(parsed) {
-    if (Array.isArray(parsed)) {
-        return parsed;
-    }
-
-    if (isObject(parsed)) {
-        if (Array.isArray(parsed.rows)) return parsed.rows;
-        if (Array.isArray(parsed.data)) return parsed.data;
-        if (Array.isArray(parsed.items)) return parsed.items;
-    }
-
-    throw new Error("Anonymizer output non valido: array atteso.");
-}
-
 function replaceByKind(kind, key, value, cfg) {
     const raw = String(value ?? "");
     const normalizedKey = normalizeKey(key);
@@ -406,40 +392,6 @@ function deterministicFallback(rows, cfg, fieldKindMap) {
 
             if (typeof value === "string" && !isExplicitlySafeKey(key)) {
                 out[key] = maskInlineWithHashes(value, cfg);
-            }
-        }
-        return out;
-    });
-}
-
-function normalizeRowsShape(sourceRows, candidateRows, fieldKindMap, cfg) {
-    if (!Array.isArray(candidateRows) || candidateRows.length !== sourceRows.length) {
-        throw new Error("Anonymizer output non valido: numero righe differente.");
-    }
-
-    return sourceRows.map((source, idx) => {
-        if (!isObject(source)) return source;
-
-        const candidate = isObject(candidateRows[idx]) ? candidateRows[idx] : {};
-        const out = {};
-
-        for (const key of Object.keys(source)) {
-            const kind = resolveKindForValue(key, source[key], fieldKindMap);
-            if (!kind) {
-                out[key] = source[key];
-                continue;
-            }
-
-            if (Object.prototype.hasOwnProperty.call(candidate, key) && candidate[key] !== undefined) {
-                const candidateValue = candidate[key];
-                const sourceValue = source[key];
-                const echoedUnchanged = isUnsafeEcho(candidateValue, sourceValue);
-
-                out[key] = echoedUnchanged
-                    ? replaceByKind(kind, key, sourceValue, cfg)
-                    : candidateValue;
-            } else {
-                out[key] = replaceByKind(kind, key, source[key], cfg);
             }
         }
         return out;
@@ -549,88 +501,36 @@ async function identifyFieldsWithOllama(rows, cfg) {
 }
 
 async function resolveFieldKinds(rows, cfg) {
+    const mode = String(cfg?.mode || "hybrid").toLowerCase();
     const provider = String(cfg?.provider || "").toLowerCase();
     const strategy = String(cfg?.fieldIdentification || "hybrid").toLowerCase();
+    const requireLlmClassification = mode === "llm-strict";
 
-    if (strategy === "heuristic" || provider !== "ollama") {
+    if (!requireLlmClassification && (strategy === "heuristic" || provider !== "ollama")) {
         return new Map();
     }
 
     if (!cfg?.baseUrl || !cfg?.model) {
+        if (requireLlmClassification || strategy === "llm") {
+            throw new Error("Field identification LLM non disponibile: baseUrl/model mancanti.");
+        }
         return new Map();
     }
 
     try {
         return await identifyFieldsWithOllama(rows, cfg);
     } catch {
-        if (strategy === "llm") {
-            throw new Error("Field identification LLM fallita con strategia ANON_FIELD_IDENTIFICATION=llm.");
+        if (requireLlmClassification || strategy === "llm") {
+            throw new Error("Field identification LLM fallita.");
         }
         return new Map();
     }
-}
-
-async function anonymizeWithOllama(rows, cfg, fieldKindMap) {
-    const systemPrompt = [
-        "Sei un motore di anonimizzazione dati.",
-        "Riceverai un array JSON di righe database.",
-        "Devi restituire SOLO JSON valido, stessa struttura, stesse chiavi, stesso numero di righe.",
-        "Anonimizza o pseudonimizza PII (nome, cognome, email, telefono, codice fiscale, partita IVA, indirizzi, note contenenti dati personali).",
-        "Mantieni invariati i campi tecnici non personali (id tecnici, enum, importi, date di sistema, flag).",
-        "Non aggiungere testo extra."
-    ].join(" ");
-
-    const userPrompt = JSON.stringify({ rows });
-    const timeoutMs = Number(cfg?.timeoutMs ?? 5000);
-    const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort("timeout"), timeoutMs);
-
-    let response;
-    try {
-        response = await fetch(`${cfg.baseUrl.replace(/\/$/, "")}/api/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                model: cfg.model,
-                stream: false,
-                format: "json",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: userPrompt }
-                ]
-            }),
-            signal: abortController.signal
-        });
-    } catch (error) {
-        if (error?.name === "AbortError") {
-            throw new Error(`Anonymizer timeout after ${timeoutMs}ms`);
-        }
-        throw error;
-    } finally {
-        clearTimeout(timeout);
-    }
-
-    if (!response.ok) {
-        throw new Error(`Anonymizer HTTP error: ${response.status}`);
-    }
-
-    const payload = await response.json();
-    const text = payload?.message?.content || payload?.response || "";
-    const jsonText = extractJsonFromText(text);
-    if (!jsonText) {
-        throw new Error("Anonymizer output non parsabile (JSON mancante).");
-    }
-
-    const parsed = JSON.parse(jsonText);
-    const candidateRows = coerceRowsArray(parsed);
-    return normalizeRowsShape(rows, candidateRows, fieldKindMap, cfg);
 }
 
 export async function anonymizeRows(rows, cfg) {
     if (!Array.isArray(rows) || rows.length === 0) return [];
 
     const mode = String(cfg?.mode || "hybrid").toLowerCase();
-    const provider = String(cfg?.provider || "").toLowerCase();
 
     let fieldKindMap = new Map();
     try {
@@ -641,22 +541,8 @@ export async function anonymizeRows(rows, cfg) {
         }
     }
 
-    // In hybrid/deterministic mode the output is always deterministic and hash-based.
-    if (mode !== "llm-strict") {
-        return deterministicFallback(rows, cfg, fieldKindMap);
-    }
-
-    try {
-        if (provider === "ollama") {
-            return await anonymizeWithOllama(rows, cfg, fieldKindMap);
-        }
-        throw new Error(`Provider non supportato: ${cfg?.provider}`);
-    } catch (error) {
-        if (mode === "llm-strict" && !cfg?.failOpen) {
-            throw error;
-        }
-        return deterministicFallback(rows, cfg, fieldKindMap);
-    }
+    // The model may help classify sensitive fields, but the final masked value must remain deterministic.
+    return deterministicFallback(rows, cfg, fieldKindMap);
 }
 
 export const __anonymizerTestUtils = {
