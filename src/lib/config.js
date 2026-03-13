@@ -20,6 +20,33 @@ function normalizeSecret(value) {
     return String(value || "").trim();
 }
 
+const GENERIC_SECRET_PLACEHOLDERS = new Set([
+    "__set_me__",
+    "change-me",
+    "change-me-stable-secret",
+    "insert-secret-here",
+    "llm-db-prod-mcp",
+    "metti-un-segreto-stabile-lungo",
+    "placeholder",
+    "replace-me",
+    "secret",
+    "set-me",
+    "your-secret-here"
+]);
+
+function hasEnoughSecretStrength(secret) {
+    if (secret.length < 16) {
+        return false;
+    }
+
+    let classes = 0;
+    if (/[a-z]/.test(secret)) classes += 1;
+    if (/[A-Z]/.test(secret)) classes += 1;
+    if (/\d/.test(secret)) classes += 1;
+    if (/[^A-Za-z0-9]/.test(secret)) classes += 1;
+    return classes >= 3;
+}
+
 function assertRequiredSecret(value, envName, rejectedPlaceholders = []) {
     const secret = normalizeSecret(value);
     if (!secret) {
@@ -27,8 +54,19 @@ function assertRequiredSecret(value, envName, rejectedPlaceholders = []) {
     }
 
     const normalized = secret.toLowerCase();
-    if (rejectedPlaceholders.some(candidate => normalized === candidate)) {
+    const rejectedValues = new Set([
+        ...rejectedPlaceholders.map(candidate => String(candidate || "").trim().toLowerCase()),
+        ...GENERIC_SECRET_PLACEHOLDERS
+    ]);
+
+    if (rejectedValues.has(normalized)) {
         throw new Error(`${envName} non valida: sostituisci il placeholder con un secret reale.`);
+    }
+
+    if (!hasEnoughSecretStrength(secret)) {
+        throw new Error(
+            `${envName} non valida: usa un secret stabile di almeno 16 caratteri con almeno 3 classi tra maiuscole, minuscole, numeri e simboli.`
+        );
     }
     return secret;
 }
