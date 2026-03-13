@@ -49,7 +49,7 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
   - `llm`: classificazione solo LLM (fallisce se LLM non disponibile).
   - La cache interna di classificazione LLM dei field name e bounded con eviction del record meno recente, per evitare crescita illimitata del processo.
 - Default-deny anonimization: colonne stringa non riconosciute come tecniche/safe vengono pseudonimizzate comunque (`TEXT_*`) invece di passare in chiaro.
-- `ANON_HASH_SALT` (obbligatorio, segreto stabile): salt usato nell'hash deterministico. Stesso input+salt => stessa pseudonimizzazione nel tempo. Il server rifiuta l'avvio se manca o se resta il placeholder.
+- `ANON_HASH_SALT` (obbligatorio, segreto stabile): salt usato nell'hash deterministico. Stesso input+salt => stessa pseudonimizzazione nella stessa sessione e anche cross-session, se riusi sempre lo stesso secret. Il server rifiuta l'avvio se manca, se resta un placeholder noto o se il valore e troppo debole.
 - `ANON_MODEL_BASE_URL` (default `http://127.0.0.1:11434`)
 - `ANON_MODEL_NAME` (default `qwen2.5:3b-instruct`)
 - `ANON_FAIL_OPEN` (default `false`)
