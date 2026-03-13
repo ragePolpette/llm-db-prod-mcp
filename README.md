@@ -40,9 +40,9 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
 - `DB_PROD_MAX_ROW_BYTES` (default `262144`, min `4096`, max `10485760`)
 - `ANON_MODEL_PROVIDER` (default `ollama`, ammessi `ollama|deterministic`)
 - `ANON_MODE` (default `hybrid`, ammessi `hybrid|deterministic|llm-strict`)
-  - `hybrid`: usa anonimizzazione deterministica hash-based; puo usare LLM locale solo per identificare i campi sensibili.
+  - `hybrid`: usa anonimizzazione deterministica hash-based; puo usare LLM locale solo per identificare i campi sensibili, ma non per produrre il valore finale mascherato.
   - `deterministic`: solo anonimizzazione deterministica hash-based (piu veloce, nessuna dipendenza LLM).
-  - `llm-strict`: solo LLM locale (se fallisce, fallisce la richiesta).
+  - `llm-strict`: richiede classificazione LLM dei campi sensibili in modalita fail-closed; se l'identificazione LLM fallisce, fallisce la richiesta. Anche in questa modalita, il valore finale sensibile resta deterministico/hash-based.
 - `ANON_FIELD_IDENTIFICATION` (default `hybrid`, ammessi `hybrid|heuristic|llm`)
   - `hybrid`: tenta classificazione campi con LLM locale, fallback euristico.
   - `heuristic`: classificazione solo con regole locali.
@@ -53,7 +53,7 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
 - `ANON_MODEL_BASE_URL` (default `http://127.0.0.1:11434`)
 - `ANON_MODEL_NAME` (default `qwen2.5:3b-instruct`)
 - `ANON_FAIL_OPEN` (default `false`)
-  - in `llm-strict`, `false` mantiene comportamento fail-closed.
+  - in `llm-strict`, `false` mantiene comportamento fail-closed sulla classificazione LLM.
   - in `hybrid`, il fallback deterministico e gia attivo per garantire latenza.
 - `ANON_TIMEOUT_MS` (default `5000`, timeout chiamata LLM locale)
 - `ANON_LLM_MAX_ROWS` (default `2`, oltre passa a deterministic)
