@@ -13,6 +13,7 @@ Regole implementate:
 - Timeout query DB configurabile (default `9000ms`, max `10000ms`).
 - Hard cap payload risultato (default `5MB`) durante stream.
 - Limite su righe tramite stream cancellation server-side e su dimensione LOB tramite `SET TEXTSIZE`.
+- Input invalidi dei tool restituiti come **tool execution errors** MCP, non come protocol errors.
 
 ## Setup
 
@@ -65,7 +66,8 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
 - `MCP_PROD_SSE_ENABLED` (default `false`; se `false`, `GET /mcp` risponde `405`)
 - `MCP_PROD_ALLOWED_HOSTS` (default `localhost,127.0.0.1,[::1]`)
 - `MCP_PROD_ALLOWED_ORIGINS` (default localhost loopback con wildcard porta)
-  - Le richieste a `/mcp` senza header `Origin` vengono rifiutate; `Origin` deve essere presente e allowlisted.
+  - Le richieste browser con header `Origin` devono essere allowlisted.
+  - Le richieste non-browser senza `Origin` restano consentite (es. `mcp-remote`, curl, smoke test locali).
 - `MCP_MODELS_DIR` (default `.local/models`)
 - `OLLAMA_MODELS` (default `.local/models/ollama`)
 
@@ -78,6 +80,7 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
   - costruisce il batch eseguito solo a partire dalla query gia validata (`SET TEXTSIZE <n>; <SELECT/WITH validata>;`)
   - rifiuta parametri non validi (nome parametro e tipo valore)
   - applica limitazione dimensione LOB (`TEXTSIZE`) + controllo/stop durante stream quando supera i limiti di righe o payload
+  - restituisce `isError=true` per errori di validazione input tool
 - `db_prod_info`
   - descrive scopo operativo e limiti di sicurezza (read-only + anonimizzazione)
 

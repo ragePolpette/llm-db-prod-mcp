@@ -1,17 +1,27 @@
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { getProdConfig } from "./lib/config.js";
-import { assertReadOnlySql } from "./lib/sql-guard.js";
-import { runReadQuery } from "./lib/db-client.js";
+import {
+    CallToolRequestSchema,
+    ErrorCode,
+    isInitializeRequest,
+    ListToolsRequestSchema,
+    McpError
+} from "@modelcontextprotocol/sdk/types.js";
 import { anonymizeRows } from "./lib/anonymizer.js";
+import { getProdConfig } from "./lib/config.js";
+import { runReadQuery } from "./lib/db-client.js";
 import { evaluateOrigin } from "./lib/origin-validation.js";
 import { runProdPreflight } from "./lib/preflight.js";
+import { assertReadOnlySql } from "./lib/sql-guard.js";
 
-const config = getProdConfig();
+const CORS_ALLOW_HEADERS = "Content-Type, Accept, MCP-Session-Id, MCP-Protocol-Version, Last-Event-ID";
+const CORS_ALLOW_METHODS = "POST, GET, DELETE, OPTIONS";
+const CORS_EXPOSE_HEADERS = "MCP-Session-Id";
 const SESSION_ID_REGEX = /^[a-zA-Z0-9-]{1,128}$/;
+const SUPPORTED_TOOL_NAMES = new Set(["db_prod_read_anonymized", "db_prod_info"]);
 
 function normalizeSessionId(sessionIdRaw) {
     if (Array.isArray(sessionIdRaw)) {
@@ -80,7 +90,128 @@ function asTextResult(payload) {
     };
 }
 
-function createMcpServer() {
+function asToolError(message) {
+    return {
+        content: [
+            {
+                type: "text",
+                text: message
+            }
+        ],
+        isError: true
+    };
+}
+
+function createToolDefinitions(config) {
+    return [
+        {
+            name: "db_prod_read_anonymized",
+            description: "DB PROD: sola lettura SQL su produzione con anonimizzazione obbligatoria prima della risposta.",
+            annotations: {
+                readOnlyHint: true,
+                destructiveHint: false,
+                idempotentHint: true,
+                openWorldHint: false
+            },
+            inputSchema: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    sql: { type: "string", description: "Query SQL di sola lettura (SELECT/WITH)." },
+                    parameters: {
+                        type: "object",
+                        description: "Parametri query (key/value).",
+                        additionalProperties: true
+                    },
+                    maxRows: {
+                        type: "integer",
+                        description: `Numero massimo righe restituite (default ${config.maxRows}).`,
+                        minimum: 1,
+                        maximum: 250
+                    }
+                },
+                required: ["sql"]
+            }
+        },
+        {
+            name: "db_prod_info",
+            description: "Spiega scopo, limiti e regole di sicurezza del MCP DB PROD.",
+            annotations: {
+                readOnlyHint: true,
+                destructiveHint: false,
+                idempotentHint: true,
+                openWorldHint: false
+            },
+            inputSchema: {
+                type: "object",
+                additionalProperties: false,
+                properties: {}
+            }
+        }
+    ];
+}
+
+function createToolHandler(config, dependencies) {
+    return async (request) => {
+        const { name, arguments: args } = request.params;
+        if (!SUPPORTED_TOOL_NAMES.has(name)) {
+            throw new McpError(ErrorCode.InvalidParams, `Tool non supportato: ${name}`);
+        }
+
+        try {
+            if (name === "db_prod_info") {
+                return asTextResult({
+                    server: "llm-db-prod-mcp",
+                    purpose: "Accesso SQL read-only al DB di produzione con anonimizzazione obbligatoria.",
+                    capabilities: [
+                        "db_prod_read_anonymized: SELECT/WITH + anonimizzazione output"
+                    ],
+                    constraints: [
+                        "Nessuna write disponibile",
+                        "Solo query read-only validate",
+                        "Output sempre anonimizzato",
+                        "Gli errori di validazione vengono restituiti come tool execution errors"
+                    ]
+                });
+            }
+
+            const sqlText = assertReadOnlySql(args?.sql);
+            const maxRows = parseMaxRows(args?.maxRows, config.maxRows);
+            const parameters = sanitizeParameters(args?.parameters);
+            const dbResult = await dependencies.runReadQuery({
+                connectionString: config.connectionString,
+                sqlText,
+                parameters,
+                maxRows,
+                queryTimeoutMs: config.queryTimeoutMs,
+                maxResultBytes: config.maxResultBytes,
+                textSizeBytes: config.textSizeBytes,
+                maxRowBytes: config.maxRowBytes
+            });
+
+            const anonymized = await dependencies.anonymizeRows(dbResult.rows, config.anonymizer);
+            return asTextResult({
+                success: true,
+                mode: "read_anonymized",
+                rowCount: anonymized.length,
+                truncated: dbResult.truncated,
+                rows: anonymized
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Errore interno durante l'esecuzione del tool.";
+            return asToolError(message);
+        }
+    };
+}
+
+export function createMcpServer({
+    config,
+    dependencies = {
+        runReadQuery,
+        anonymizeRows
+    }
+}) {
+    const toolDefinitions = createToolDefinitions(config);
     const server = new Server(
         {
             name: "llm-db-prod-mcp",
@@ -94,85 +225,9 @@ function createMcpServer() {
     );
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: [
-            {
-                name: "db_prod_read_anonymized",
-                description: "DB PROD: sola lettura SQL su produzione con anonimizzazione obbligatoria prima della risposta.",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        sql: { type: "string", description: "Query SQL di sola lettura (SELECT/WITH)." },
-                        parameters: {
-                            type: "object",
-                            description: "Parametri query (key/value).",
-                            additionalProperties: true
-                        },
-                        maxRows: {
-                            type: "integer",
-                            description: `Numero massimo righe restituite (default ${config.maxRows}).`,
-                            minimum: 1,
-                            maximum: 250
-                        }
-                    },
-                    required: ["sql"]
-                }
-            },
-            {
-                name: "db_prod_info",
-                description: "Spiega scopo, limiti e regole di sicurezza del MCP DB PROD.",
-                inputSchema: {
-                    type: "object",
-                    properties: {}
-                }
-            }
-        ]
+        tools: toolDefinitions
     }));
-
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
-        const { name, arguments: args } = request.params;
-
-        if (name === "db_prod_info") {
-            return asTextResult({
-                server: "llm-db-prod-mcp",
-                purpose: "Accesso SQL read-only al DB di produzione con anonimizzazione obbligatoria.",
-                capabilities: [
-                    "db_prod_read_anonymized: SELECT/WITH + anonimizzazione output"
-                ],
-                constraints: [
-                    "Nessuna write disponibile",
-                    "Solo query read-only validate",
-                    "Output sempre anonimizzato"
-                ]
-            });
-        }
-
-        if (name !== "db_prod_read_anonymized") {
-            throw new Error(`Tool non supportato: ${name}`);
-        }
-
-        const sqlText = assertReadOnlySql(args?.sql);
-        const maxRows = parseMaxRows(args?.maxRows, config.maxRows);
-        const parameters = sanitizeParameters(args?.parameters);
-        const dbResult = await runReadQuery({
-            connectionString: config.connectionString,
-            sqlText,
-            parameters,
-            maxRows,
-            queryTimeoutMs: config.queryTimeoutMs,
-            maxResultBytes: config.maxResultBytes,
-            textSizeBytes: config.textSizeBytes,
-            maxRowBytes: config.maxRowBytes
-        });
-
-        const anonymized = await anonymizeRows(dbResult.rows, config.anonymizer);
-        return asTextResult({
-            success: true,
-            mode: "read_anonymized",
-            rowCount: anonymized.length,
-            truncated: dbResult.truncated,
-            rows: anonymized
-        });
-    });
+    server.setRequestHandler(CallToolRequestSchema, createToolHandler(config, dependencies));
 
     return server;
 }
@@ -188,25 +243,34 @@ function createErrorResponse(message) {
     };
 }
 
-function withOriginValidation(req, res, next) {
-    if (req.path === "/health") {
-        next();
-        return;
-    }
+function withOriginValidationFactory(config) {
+    return function withOriginValidation(req, res, next) {
+        if (req.path === "/health") {
+            next();
+            return;
+        }
 
-    const result = evaluateOrigin(req.headers, config.server.allowedOrigins);
-    if (!result.ok) {
-        res.status(result.status).json(createErrorResponse(result.message));
-        return;
-    }
-    res.set("Vary", "Origin");
-    res.set("Access-Control-Allow-Origin", result.origin);
-    next();
+        if (!req.headers.origin) {
+            next();
+            return;
+        }
+
+        const result = evaluateOrigin(req.headers, config.server.allowedOrigins);
+        if (!result.ok) {
+            res.status(result.status).json(createErrorResponse(result.message));
+            return;
+        }
+
+        res.append("Vary", "Origin");
+        res.set("Access-Control-Allow-Origin", result.origin);
+        res.set("Access-Control-Expose-Headers", CORS_EXPOSE_HEADERS);
+        next();
+    };
 }
 
 function sendCorsPreflight(res) {
-    res.set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Content-Type, Accept, mcp-session-id");
+    res.set("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
+    res.set("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
     res.set("Access-Control-Max-Age", "600");
     res.status(204).send();
 }
@@ -219,149 +283,188 @@ function sendUnknownSession(res) {
     res.status(404).json(createErrorResponse("Not Found: Invalid or expired session ID"));
 }
 
-const app = createMcpExpressApp({
-    host: config.server.host,
-    allowedHosts: config.server.allowedHosts?.length ? config.server.allowedHosts : undefined
-});
-const transports = new Map();
-app.use(withOriginValidation);
-app.options(config.server.path, (_req, res) => {
-    sendCorsPreflight(res);
-});
-
-app.get("/health", (_req, res) => {
-    res.json({
-        status: "ok",
-        server: "llm-db-prod-mcp",
-        endpoint: config.server.path,
-        pid: process.pid,
-        uptimeSec: Math.floor(process.uptime())
+export function createApp({
+    config,
+    transportStore = new Map(),
+    serverFactory = createMcpServer
+}) {
+    const app = createMcpExpressApp({
+        host: config.server.host,
+        allowedHosts: config.server.allowedHosts?.length ? config.server.allowedHosts : undefined
     });
-});
 
-app.post(config.server.path, async (req, res) => {
-    const rawSessionId = req.headers["mcp-session-id"];
-    const sessionId = normalizeSessionId(rawSessionId);
-    const hasSessionHeader = rawSessionId !== undefined;
-    let transport;
+    app.use(withOriginValidationFactory(config));
+    app.options(config.server.path, (_req, res) => {
+        sendCorsPreflight(res);
+    });
 
-    try {
-        if (sessionId && transports.has(sessionId)) {
-            transport = transports.get(sessionId);
-            await transport.handleRequest(req, res, req.body);
+    app.get("/health", (_req, res) => {
+        res.json({
+            status: "ok",
+            server: "llm-db-prod-mcp",
+            endpoint: config.server.path,
+            pid: process.pid,
+            uptimeSec: Math.floor(process.uptime()),
+            activeSessions: transportStore.size
+        });
+    });
+
+    app.post(config.server.path, async (req, res) => {
+        const rawSessionId = req.headers["mcp-session-id"];
+        const sessionId = normalizeSessionId(rawSessionId);
+        const hasSessionHeader = rawSessionId !== undefined;
+        let transport;
+
+        try {
+            if (sessionId && transportStore.has(sessionId)) {
+                transport = transportStore.get(sessionId);
+                await transport.handleRequest(req, res, req.body);
+                return;
+            }
+
+            if (hasSessionHeader && (!sessionId || !transportStore.has(sessionId))) {
+                sendUnknownSession(res);
+                return;
+            }
+
+            if (!sessionId && isInitializeRequest(req.body)) {
+                const server = serverFactory({ config });
+                transport = new StreamableHTTPServerTransport({
+                    sessionIdGenerator: () => randomUUID(),
+                    enableJsonResponse: !config.server.sseEnabled,
+                    onsessioninitialized: sid => {
+                        if (normalizeSessionId(sid)) {
+                            transportStore.set(sid, transport);
+                        }
+                    }
+                });
+
+                transport.onclose = () => {
+                    const sid = transport.sessionId;
+                    if (sid && transportStore.has(sid)) {
+                        transportStore.delete(sid);
+                    }
+                };
+
+                await server.connect(transport);
+                await transport.handleRequest(req, res, req.body);
+                return;
+            }
+
+            sendMissingSession(res);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Internal server error";
+            console.error("POST MCP request failed:", message);
+            if (!res.headersSent) {
+                res.status(500).json(createErrorResponse("Internal server error"));
+            }
+        }
+    });
+
+    app.get(config.server.path, async (req, res) => {
+        if (!config.server.sseEnabled) {
+            res.status(405).set("Allow", "POST, DELETE").send("Method Not Allowed");
             return;
         }
 
-        if (hasSessionHeader && (!sessionId || !transports.has(sessionId))) {
+        const rawSessionId = req.headers["mcp-session-id"];
+        if (rawSessionId === undefined) {
+            sendMissingSession(res);
+            return;
+        }
+
+        const sessionId = normalizeSessionId(rawSessionId);
+        if (!sessionId || !transportStore.has(sessionId)) {
             sendUnknownSession(res);
             return;
         }
 
-        if (!sessionId && isInitializeRequest(req.body)) {
-            const server = createMcpServer();
-            transport = new StreamableHTTPServerTransport({
-                sessionIdGenerator: () => randomUUID(),
-                enableJsonResponse: !config.server.sseEnabled,
-                onsessioninitialized: sid => {
-                    if (normalizeSessionId(sid)) {
-                        transports.set(sid, transport);
-                    }
-                }
-            });
+        try {
+            await transportStore.get(sessionId).handleRequest(req, res);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Internal server error";
+            console.error("GET MCP request failed:", message);
+            if (!res.headersSent) {
+                res.status(500).json(createErrorResponse("Internal server error"));
+            }
+        }
+    });
 
-            transport.onclose = () => {
-                const sid = transport.sessionId;
-                if (sid && transports.has(sid)) {
-                    transports.delete(sid);
-                }
-            };
-
-            await server.connect(transport);
-            await transport.handleRequest(req, res, req.body);
+    app.delete(config.server.path, async (req, res) => {
+        const rawSessionId = req.headers["mcp-session-id"];
+        if (rawSessionId === undefined) {
+            sendMissingSession(res);
             return;
         }
 
-        sendMissingSession(res);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : "Internal server error";
-        console.error("POST MCP request failed:", message);
-        if (!res.headersSent) {
-            res.status(500).json(createErrorResponse("Internal server error"));
+        const sessionId = normalizeSessionId(rawSessionId);
+        if (!sessionId || !transportStore.has(sessionId)) {
+            sendUnknownSession(res);
+            return;
         }
-    }
-});
 
-app.get(config.server.path, async (req, res) => {
-    if (!config.server.sseEnabled) {
-        res.status(405).set("Allow", "POST, DELETE").send("Method Not Allowed");
-        return;
-    }
-
-    const rawSessionId = req.headers["mcp-session-id"];
-    if (rawSessionId === undefined) {
-        sendMissingSession(res);
-        return;
-    }
-
-    const sessionId = normalizeSessionId(rawSessionId);
-    if (!sessionId || !transports.has(sessionId)) {
-        sendUnknownSession(res);
-        return;
-    }
-
-    try {
-        await transports.get(sessionId).handleRequest(req, res);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : "Internal server error";
-        console.error("GET MCP request failed:", message);
-        if (!res.headersSent) {
-            res.status(500).json(createErrorResponse("Internal server error"));
+        try {
+            await transportStore.get(sessionId).handleRequest(req, res);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Internal server error";
+            console.error("DELETE MCP request failed:", message);
+            if (!res.headersSent) {
+                res.status(500).json(createErrorResponse("Internal server error"));
+            }
         }
-    }
-});
-
-app.delete(config.server.path, async (req, res) => {
-    const rawSessionId = req.headers["mcp-session-id"];
-    if (rawSessionId === undefined) {
-        sendMissingSession(res);
-        return;
-    }
-
-    const sessionId = normalizeSessionId(rawSessionId);
-    if (!sessionId || !transports.has(sessionId)) {
-        sendUnknownSession(res);
-        return;
-    }
-
-    try {
-        await transports.get(sessionId).handleRequest(req, res);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : "Internal server error";
-        console.error("DELETE MCP request failed:", message);
-        if (!res.headersSent) {
-            res.status(500).json(createErrorResponse("Internal server error"));
-        }
-    }
-});
-
-async function startServer() {
-    await runProdPreflight(config);
-
-    const httpServer = app.listen(config.server.port, config.server.host, () => {
-        console.log(
-            `llm-db-prod-mcp listening at http://${config.server.host}:${config.server.port}${config.server.path}`
-        );
     });
 
-    httpServer.on("error", error => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error("Failed to start llm-db-prod-mcp:", message);
-        process.exit(1);
+    return { app, transportStore };
+}
+
+export async function startServer({
+    config = getProdConfig(),
+    runPreflight = runProdPreflight,
+    logger = console
+} = {}) {
+    await runPreflight(config);
+    const { app, transportStore } = createApp({ config });
+
+    return await new Promise((resolve, reject) => {
+        const httpServer = app.listen(config.server.port, config.server.host, () => {
+            const address = httpServer.address();
+            const actualPort = typeof address === "object" && address ? address.port : config.server.port;
+            logger.log(
+                `llm-db-prod-mcp listening at http://${config.server.host}:${actualPort}${config.server.path}`
+            );
+            resolve({
+                app,
+                transportStore,
+                httpServer,
+                url: `http://${config.server.host}:${actualPort}${config.server.path}`
+            });
+        });
+
+        httpServer.on("error", reject);
     });
 }
 
-startServer().catch(error => {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("Preflight failed for llm-db-prod-mcp:", message);
-    process.exit(1);
-});
+export async function stopServer(httpServer) {
+    if (!httpServer) return;
+    await new Promise((resolve, reject) => {
+        httpServer.close(error => {
+            if (error) {
+                reject(error);
+                return;
+            }
+            resolve();
+        });
+    });
+}
+
+function isDirectRun() {
+    return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+}
+
+if (isDirectRun()) {
+    startServer().catch(error => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error("Preflight failed for llm-db-prod-mcp:", message);
+        process.exit(1);
+    });
+}

@@ -190,3 +190,7 @@ export function getProdConfig() {
         }
     };
 }
+
+export function __resetEnvLoaderForTests() {
+    envLoaded = false;
+}
