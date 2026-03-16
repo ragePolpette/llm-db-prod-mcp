@@ -80,6 +80,19 @@ function asTextResult(payload) {
     };
 }
 
+function safeJson(value) {
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return JSON.stringify({ error: "serialization_failed" });
+    }
+}
+
+function logDbEvent(event, payload) {
+    const timestamp = new Date().toISOString();
+    process.stderr.write(`[DB_PROD_MCP] ${timestamp} ${event} ${safeJson(payload)}\n`);
+}
+
 function createMcpServer() {
     const server = new Server(
         {
@@ -153,6 +166,12 @@ function createMcpServer() {
         const sqlText = assertReadOnlySql(args?.sql);
         const maxRows = parseMaxRows(args?.maxRows, config.maxRows);
         const parameters = sanitizeParameters(args?.parameters);
+        logDbEvent("query_in", {
+            tool: name,
+            sql: sqlText,
+            parameters: parameters ?? {},
+            maxRows
+        });
         const dbResult = await runReadQuery({
             connectionString: config.connectionString,
             sqlText,
@@ -165,13 +184,18 @@ function createMcpServer() {
         });
 
         const anonymized = await anonymizeRows(dbResult.rows, config.anonymizer, { sqlText });
-        return asTextResult({
+        const payload = {
             success: true,
             mode: "read_anonymized",
             rowCount: anonymized.length,
             truncated: dbResult.truncated,
             rows: anonymized
+        };
+        logDbEvent("query_out", {
+            tool: name,
+            response: payload
         });
+        return asTextResult(payload);
     });
 
     return server;
