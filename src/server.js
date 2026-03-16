@@ -164,7 +164,7 @@ function createMcpServer() {
             maxRowBytes: config.maxRowBytes
         });
 
-        const anonymized = await anonymizeRows(dbResult.rows, config.anonymizer);
+        const anonymized = await anonymizeRows(dbResult.rows, config.anonymizer, { sqlText });
         return asTextResult({
             success: true,
             mode: "read_anonymized",

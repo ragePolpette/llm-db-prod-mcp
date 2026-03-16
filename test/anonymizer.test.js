@@ -136,8 +136,8 @@ test("llm kind cache evicts the oldest key when max size is reached", () => {
 
     const keys = __anonymizerTestUtils.getKindCacheKeys();
     assert.equal(keys.length, maxSize);
-    assert.equal(keys.includes("field_0"), false);
-    assert.equal(keys.includes("field_overflow"), true);
+    assert.equal(keys.includes("__global__|field_0"), false);
+    assert.equal(keys.includes("__global__|field_overflow"), true);
 });
 
 test("llm kind cache refreshes recency on read", async () => {
@@ -176,9 +176,118 @@ test("llm kind cache refreshes recency on read", async () => {
         __anonymizerTestUtils.setCachedKind("fresh_overflow", "email");
 
         const keysAfterOverflow = __anonymizerTestUtils.getKindCacheKeys();
-        assert.equal(keysAfterOverflow.includes("field_0"), true);
-        assert.equal(keysAfterOverflow.includes("field_1"), false);
-        assert.equal(keysAfterOverflow.includes("fresh_overflow"), true);
+        assert.equal(keysAfterOverflow.includes("__global__|field_0"), true);
+        assert.equal(keysAfterOverflow.includes("__global__|field_1"), false);
+        assert.equal(keysAfterOverflow.includes("__global__|fresh_overflow"), true);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("query scope cache separates same column names across different sources", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+        fetchCalls += 1;
+        const kind = fetchCalls === 1 ? "email" : "text";
+        return {
+            ok: true,
+            async json() {
+                return {
+                    message: {
+                        content: JSON.stringify({
+                            fields: {
+                                shared_column: kind
+                            }
+                        })
+                    }
+                };
+            }
+        };
+    };
+
+    try {
+        const first = await anonymizeRows(
+            [{ shared_column: "user@example.com" }],
+            {
+                ...baseCfg,
+                provider: "ollama",
+                mode: "hybrid",
+                fieldIdentification: "hybrid",
+                baseUrl: "http://127.0.0.1:11434",
+                model: "qwen2.5:3b-instruct"
+            },
+            { sqlText: "select shared_column from dbo.contacts" }
+        );
+        const second = await anonymizeRows(
+            [{ shared_column: "memo interno riservato" }],
+            {
+                ...baseCfg,
+                provider: "ollama",
+                mode: "hybrid",
+                fieldIdentification: "hybrid",
+                baseUrl: "http://127.0.0.1:11434",
+                model: "qwen2.5:3b-instruct"
+            },
+            { sqlText: "select shared_column from dbo.notes" }
+        );
+
+        assert.equal(fetchCalls, 2);
+        assert.match(first[0].shared_column, /^user_[a-z0-9]+@example\.invalid$/);
+        assert.match(second[0].shared_column, /^TEXT_/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("query scope cache reuses the same source without a second ollama call", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+        fetchCalls += 1;
+        return {
+            ok: true,
+            async json() {
+                return {
+                    message: {
+                        content: JSON.stringify({
+                            fields: {
+                                customer_mail: "email"
+                            }
+                        })
+                    }
+                };
+            }
+        };
+    };
+
+    try {
+        await anonymizeRows(
+            [{ customer_mail: "one@example.com" }],
+            {
+                ...baseCfg,
+                provider: "ollama",
+                mode: "hybrid",
+                fieldIdentification: "hybrid",
+                baseUrl: "http://127.0.0.1:11434",
+                model: "qwen2.5:3b-instruct"
+            },
+            { sqlText: "select customer_mail from dbo.contacts" }
+        );
+        await anonymizeRows(
+            [{ customer_mail: "two@example.com" }],
+            {
+                ...baseCfg,
+                provider: "ollama",
+                mode: "hybrid",
+                fieldIdentification: "hybrid",
+                baseUrl: "http://127.0.0.1:11434",
+                model: "qwen2.5:3b-instruct"
+            },
+            { sqlText: "select customer_mail from dbo.contacts" }
+        );
+
+        assert.equal(fetchCalls, 1);
     } finally {
         globalThis.fetch = originalFetch;
     }
