@@ -65,21 +65,8 @@ function ensureLocalAnonymizerConfig(anonymizer) {
     const mode = String(anonymizer?.mode || "hybrid").trim().toLowerCase();
     const fieldIdentification = String(anonymizer?.fieldIdentification || "hybrid").trim().toLowerCase();
 
-    if (fieldIdentification === "llm" && provider !== "ollama") {
-        throw new Error(
-            "Configurazione non valida: ANON_FIELD_IDENTIFICATION=llm richiede ANON_MODEL_PROVIDER=ollama."
-        );
-    }
-
-    const needsOllama = provider === "ollama" && (mode === "llm-strict" || fieldIdentification === "llm" || fieldIdentification === "hybrid");
-    if (!needsOllama) {
-        return { provider: "deterministic" };
-    }
-
     if (provider !== "ollama") {
-        throw new Error(
-            `Invalid ANON_MODEL_PROVIDER '${anonymizer?.provider}'. Valori ammessi: 'ollama' o 'deterministic'.`
-        );
+        throw new Error("Produzione richiede ANON_MODEL_PROVIDER=ollama.");
     }
 
     const baseUrlRaw = String(anonymizer?.baseUrl || "").trim();
@@ -102,6 +89,14 @@ function ensureLocalAnonymizerConfig(anonymizer) {
 
     if (isBooleanTrue(anonymizer?.failOpen) && mode === "llm-strict") {
         throw new Error("ANON_FAIL_OPEN=true non consentito in produzione.");
+    }
+
+    if (mode === "deterministic") {
+        throw new Error("ANON_MODE=deterministic non consentito in produzione: usa hybrid o llm-strict.");
+    }
+
+    if (fieldIdentification === "heuristic") {
+        throw new Error("ANON_FIELD_IDENTIFICATION=heuristic non consentito in produzione: Ollama deve essere attivo.");
     }
 
     const model = String(anonymizer?.model || "").trim();
