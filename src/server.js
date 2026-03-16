@@ -199,8 +199,10 @@ function withOriginValidation(req, res, next) {
         res.status(result.status).json(createErrorResponse(result.message));
         return;
     }
-    res.set("Vary", "Origin");
-    res.set("Access-Control-Allow-Origin", result.origin);
+    if (result.origin) {
+        res.set("Vary", "Origin");
+        res.set("Access-Control-Allow-Origin", result.origin);
+    }
     next();
 }
 

@@ -9,11 +9,10 @@ const allowedOrigins = [
     "https://localhost:*"
 ];
 
-test("evaluateOrigin rejects missing origin header", () => {
+test("evaluateOrigin accepts missing origin header for non-browser clients", () => {
     assert.deepEqual(evaluateOrigin({}, allowedOrigins), {
-        ok: false,
-        status: 403,
-        message: "Forbidden: Missing Origin header"
+        ok: true,
+        origin: null
     });
 });
 

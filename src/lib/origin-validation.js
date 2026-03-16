@@ -40,9 +40,8 @@ export function evaluateOrigin(headers, allowedOrigins) {
     const origin = normalizeHeaderValue(headers?.origin);
     if (!origin) {
         return {
-            ok: false,
-            status: 403,
-            message: "Forbidden: Missing Origin header"
+            ok: true,
+            origin: null
         };
     }
 
