@@ -8,6 +8,7 @@ const VAT_REGEX = /\b\d{11,16}\b/g;
 const KIND_VALUES = new Set(["email", "phone", "cf", "vat", "name", "org", "address", "city", "text"]);
 const NONE_KIND = "__none__";
 const LLM_KIND_CACHE_MAX_SIZE = 512;
+const GLOBAL_CACHE_SCOPE = "__global__";
 const SAFE_EXACT_KEYS = new Set([
     "id",
     "ids",
@@ -248,19 +249,30 @@ function normalizeKind(kind) {
     return KIND_VALUES.has(value) ? value : NONE_KIND;
 }
 
-function getCachedKind(normalizedKey) {
-    if (!LLM_KIND_CACHE.has(normalizedKey)) return null;
-    const value = LLM_KIND_CACHE.get(normalizedKey);
-    LLM_KIND_CACHE.delete(normalizedKey);
-    LLM_KIND_CACHE.set(normalizedKey, value);
+function normalizeCacheScope(scope) {
+    const value = String(scope || "").trim().toLowerCase();
+    return value || GLOBAL_CACHE_SCOPE;
+}
+
+function cacheKeyFor(normalizedKey, scope = GLOBAL_CACHE_SCOPE) {
+    return `${normalizeCacheScope(scope)}|${String(normalizedKey || "")}`;
+}
+
+function getCachedKind(normalizedKey, scope = GLOBAL_CACHE_SCOPE) {
+    const cacheKey = cacheKeyFor(normalizedKey, scope);
+    if (!LLM_KIND_CACHE.has(cacheKey)) return null;
+    const value = LLM_KIND_CACHE.get(cacheKey);
+    LLM_KIND_CACHE.delete(cacheKey);
+    LLM_KIND_CACHE.set(cacheKey, value);
     return value === NONE_KIND ? null : value;
 }
 
-function setCachedKind(normalizedKey, kind) {
+function setCachedKind(normalizedKey, kind, scope = GLOBAL_CACHE_SCOPE) {
     const normalizedKind = normalizeKind(kind);
-    if (LLM_KIND_CACHE.has(normalizedKey)) {
-        LLM_KIND_CACHE.delete(normalizedKey);
-        LLM_KIND_CACHE.set(normalizedKey, normalizedKind);
+    const cacheKey = cacheKeyFor(normalizedKey, scope);
+    if (LLM_KIND_CACHE.has(cacheKey)) {
+        LLM_KIND_CACHE.delete(cacheKey);
+        LLM_KIND_CACHE.set(cacheKey, normalizedKind);
         return;
     }
 
@@ -270,10 +282,28 @@ function setCachedKind(normalizedKey, kind) {
             LLM_KIND_CACHE.delete(oldestKey);
         }
     }
-    LLM_KIND_CACHE.set(normalizedKey, normalizedKind);
+    LLM_KIND_CACHE.set(cacheKey, normalizedKind);
 }
 
-function resolveKindForKey(key, fieldKindMap) {
+function normalizeSqlSourceName(rawSource) {
+    return String(rawSource || "")
+        .trim()
+        .replace(/^[[`"]+|[\]`"]+$/g, "")
+        .replace(/\s+/g, "")
+        .toLowerCase();
+}
+
+function deriveCacheScopeFromSql(sqlText) {
+    const sql = String(sqlText || "");
+    const matches = [...sql.matchAll(/\b(?:from|join)\s+([A-Za-z0-9_\[\]".]+)/gi)];
+    const sources = [...new Set(matches.map(match => normalizeSqlSourceName(match[1])).filter(Boolean))];
+    if (sources.length === 0) {
+        return GLOBAL_CACHE_SCOPE;
+    }
+    return sources.sort().join("|");
+}
+
+function resolveKindForKey(key, fieldKindMap, cacheScope = GLOBAL_CACHE_SCOPE) {
     const normalized = normalizeKey(key);
     if (!normalized) return null;
 
@@ -281,7 +311,7 @@ function resolveKindForKey(key, fieldKindMap) {
         return fieldKindMap.get(normalized);
     }
 
-    const cached = getCachedKind(normalized);
+    const cached = getCachedKind(normalized, cacheScope);
     if (cached) {
         return cached;
     }
@@ -289,8 +319,8 @@ function resolveKindForKey(key, fieldKindMap) {
     return inferKindHeuristic(key);
 }
 
-function resolveKindForValue(key, value, fieldKindMap) {
-    const kind = resolveKindForKey(key, fieldKindMap);
+function resolveKindForValue(key, value, fieldKindMap, cacheScope = GLOBAL_CACHE_SCOPE) {
+    const kind = resolveKindForKey(key, fieldKindMap, cacheScope);
     if (kind) return kind;
     if (isExplicitlySafeKey(key)) return null;
     if (typeof value === "string" && value.trim()) {
@@ -375,7 +405,7 @@ function isUnsafeEcho(candidateValue, sourceValue) {
     return normalizedCandidate.length > 0 && normalizedCandidate === normalizedSource;
 }
 
-function deterministicFallback(rows, cfg, fieldKindMap) {
+function deterministicFallback(rows, cfg, fieldKindMap, cacheScope = GLOBAL_CACHE_SCOPE) {
     return rows.map((row) => {
         if (!isObject(row)) return row;
 
@@ -384,7 +414,7 @@ function deterministicFallback(rows, cfg, fieldKindMap) {
             const value = out[key];
             if (value === null || value === undefined) continue;
 
-            const kind = resolveKindForValue(key, value, fieldKindMap);
+            const kind = resolveKindForValue(key, value, fieldKindMap, cacheScope);
             if (kind) {
                 out[key] = replaceByKind(kind, key, value, cfg);
                 continue;
@@ -419,16 +449,16 @@ function buildFieldProbePayload(rows) {
         .slice(0, 400);
 }
 
-async function identifyFieldsWithOllama(rows, cfg) {
+async function identifyFieldsWithOllama(rows, cfg, cacheScope = GLOBAL_CACHE_SCOPE) {
     const payload = buildFieldProbePayload(rows);
     if (payload.length === 0) return new Map();
 
-    const unknown = payload.filter((entry) => !LLM_KIND_CACHE.has(normalizeKey(entry.key)));
+    const unknown = payload.filter((entry) => !getCachedKind(normalizeKey(entry.key), cacheScope));
     if (unknown.length === 0) {
         const known = new Map();
         for (const entry of payload) {
             const normalized = normalizeKey(entry.key);
-            const kind = getCachedKind(normalized);
+            const kind = getCachedKind(normalized, cacheScope);
             if (kind) known.set(normalized, kind);
         }
         return known;
@@ -488,19 +518,19 @@ async function identifyFieldsWithOllama(rows, cfg) {
     for (const entry of unknown) {
         const normalized = normalizeKey(entry.key);
         const inferred = normalizeKind(fields[entry.key]);
-        setCachedKind(normalized, inferred);
+        setCachedKind(normalized, inferred, cacheScope);
     }
 
     const resolved = new Map();
     for (const entry of payload) {
         const normalized = normalizeKey(entry.key);
-        const kind = getCachedKind(normalized);
+        const kind = getCachedKind(normalized, cacheScope);
         if (kind) resolved.set(normalized, kind);
     }
     return resolved;
 }
 
-async function resolveFieldKinds(rows, cfg) {
+async function resolveFieldKinds(rows, cfg, cacheScope = GLOBAL_CACHE_SCOPE) {
     const mode = String(cfg?.mode || "hybrid").toLowerCase();
     const provider = String(cfg?.provider || "").toLowerCase();
     const strategy = String(cfg?.fieldIdentification || "hybrid").toLowerCase();
@@ -518,7 +548,7 @@ async function resolveFieldKinds(rows, cfg) {
     }
 
     try {
-        return await identifyFieldsWithOllama(rows, cfg);
+        return await identifyFieldsWithOllama(rows, cfg, cacheScope);
     } catch {
         if (requireLlmClassification || strategy === "llm") {
             throw new Error("Field identification LLM fallita.");
@@ -527,14 +557,15 @@ async function resolveFieldKinds(rows, cfg) {
     }
 }
 
-export async function anonymizeRows(rows, cfg) {
+export async function anonymizeRows(rows, cfg, options = {}) {
     if (!Array.isArray(rows) || rows.length === 0) return [];
 
     const mode = String(cfg?.mode || "hybrid").toLowerCase();
+    const cacheScope = deriveCacheScopeFromSql(options?.sqlText);
 
     let fieldKindMap = new Map();
     try {
-        fieldKindMap = await resolveFieldKinds(rows, cfg);
+        fieldKindMap = await resolveFieldKinds(rows, cfg, cacheScope);
     } catch (error) {
         if (mode === "llm-strict" && !cfg?.failOpen) {
             throw error;
@@ -542,12 +573,13 @@ export async function anonymizeRows(rows, cfg) {
     }
 
     // The model may help classify sensitive fields, but the final masked value must remain deterministic.
-    return deterministicFallback(rows, cfg, fieldKindMap);
+    return deterministicFallback(rows, cfg, fieldKindMap, cacheScope);
 }
 
 export const __anonymizerTestUtils = {
     cacheMaxSize: LLM_KIND_CACHE_MAX_SIZE,
     isUnsafeEcho,
+    deriveCacheScopeFromSql,
     resetKindCache() {
         LLM_KIND_CACHE.clear();
     },

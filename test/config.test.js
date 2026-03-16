@@ -70,6 +70,21 @@ test("getProdConfig accepts explicit strong anonymization salt", () => {
     });
 });
 
+test("getProdConfig rejects deterministic provider in production", () => {
+    withEnv(
+        {
+            ANON_HASH_SALT: "Stable-secret-for-tests-2026!",
+            ANON_MODEL_PROVIDER: "deterministic"
+        },
+        () => {
+            assert.throws(
+                () => getProdConfig(),
+                /ANON_MODEL_PROVIDER=deterministic non consentito/
+            );
+        }
+    );
+});
+
 test("getProdConfig exposes bounded preflight timeout", () => {
     withEnv(
         {
