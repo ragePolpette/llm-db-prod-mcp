@@ -28,7 +28,7 @@ function withEnv(overrides, fn) {
 }
 
 test("getProdConfig rejects missing anonymization salt", () => {
-    withEnv({ ANON_HASH_SALT: undefined }, () => {
+    withEnv({ ANON_HASH_SALT: " " }, () => {
         assert.throws(
             () => getProdConfig(),
             /ANON_HASH_SALT obbligatoria/
