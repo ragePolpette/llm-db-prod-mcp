@@ -171,6 +171,16 @@ export function getProdConfig() {
         process.env.OLLAMA_MODELS = ollamaModelsDir;
     }
 
+    const anonymizerProvider = toEnum(
+        process.env.ANON_MODEL_PROVIDER || "ollama",
+        ["ollama", "deterministic"],
+        "ollama",
+        "ANON_MODEL_PROVIDER"
+    );
+    if (anonymizerProvider !== "ollama") {
+        throw new Error("ANON_MODEL_PROVIDER=deterministic non consentito in produzione: usa sempre ollama.");
+    }
+
     return {
         connectionString: process.env.DB_PROD_CONNECTION_STRING || "",
         maxRows: clamp(toInt(process.env.DB_PROD_MAX_ROWS, 200), 1, 250),
@@ -180,12 +190,7 @@ export function getProdConfig() {
         textSizeBytes: clamp(toInt(process.env.DB_PROD_TEXTSIZE_BYTES, 262144), 4096, 1048576),
         maxRowBytes: clamp(toInt(process.env.DB_PROD_MAX_ROW_BYTES, 262144), 4096, 10 * 1024 * 1024),
         anonymizer: {
-            provider: toEnum(
-                process.env.ANON_MODEL_PROVIDER || "ollama",
-                ["ollama", "deterministic"],
-                "ollama",
-                "ANON_MODEL_PROVIDER"
-            ),
+            provider: anonymizerProvider,
             mode: toEnum(
                 process.env.ANON_MODE || "hybrid",
                 ["hybrid", "deterministic", "llm-strict"],
