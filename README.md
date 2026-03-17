@@ -16,8 +16,9 @@ Regole implementate:
 
 ## Setup
 
-1. Copia `.env.example` in `.env` (o imposta variabili ambiente).
-2. Installa dipendenze:
+1. Copia `.env.example` in `.env` per i parametri non secret.
+2. Fornisci `DB_PROD_CONNECTION_STRING` solo via variabile ambiente di processo o secret runtime esterno; non salvarla nel `.env` del repo.
+3. Installa dipendenze:
 ```bash
 npm install
 ```
@@ -31,7 +32,7 @@ Configurazione client consigliata: `type=stdio` + `npx mcp-remote`.
 
 ## Variabili ambiente
 
-- `DB_PROD_CONNECTION_STRING` (obbligatoria, consigliato utente SQL read-only)
+- `DB_PROD_CONNECTION_STRING` (obbligatoria, consigliato utente SQL read-only): deve arrivare dal runtime process environment o da un secret store esterno. Il server rifiuta `.env` che contengono questa variabile.
 - `DB_PROD_MAX_ROWS` (default `200`, hard cap `250`)
 - `DB_PROD_QUERY_TIMEOUT_MS` (default `9000`, min `1000`, max `10000`)
 - `DB_PROD_PREFLIGHT_TIMEOUT_MS` (default `8000`, min `1000`, max `30000`): timeout esplicito per il check DB eseguito allo startup.

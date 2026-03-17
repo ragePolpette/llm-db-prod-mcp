@@ -116,6 +116,38 @@ function getLocalHostFallback() {
 }
 
 let envLoaded = false;
+let dotEnvKeysCache = null;
+
+function getDotEnvKeysFromCwd() {
+    if (dotEnvKeysCache !== null) {
+        return dotEnvKeysCache;
+    }
+
+    dotEnvKeysCache = new Set();
+    const envPath = path.resolve(process.cwd(), ".env");
+    if (!fs.existsSync(envPath)) {
+        return dotEnvKeysCache;
+    }
+
+    const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+    for (const rawLine of lines) {
+        const line = String(rawLine || "").trim();
+        if (!line || line.startsWith("#")) continue;
+        const idx = line.indexOf("=");
+        if (idx <= 0) continue;
+        dotEnvKeysCache.add(line.slice(0, idx).trim().toLowerCase());
+    }
+    return dotEnvKeysCache;
+}
+
+function assertNoProdConnectionStringInDotEnv() {
+    const dotEnvKeys = getDotEnvKeysFromCwd();
+    if (dotEnvKeys.has("db_prod_connection_string")) {
+        throw new Error(
+            "Il file .env non puo' contenere DB_PROD_CONNECTION_STRING: usa una variabile ambiente di processo o un secret runtime esterno."
+        );
+    }
+}
 
 function loadDotEnvFromCwd() {
     if (envLoaded) return;
@@ -158,6 +190,7 @@ function toEnum(value, allowed, fallback, envName) {
 
 export function getProdConfig() {
     loadDotEnvFromCwd();
+    assertNoProdConnectionStringInDotEnv();
     const localFallback = getLocalHostFallback();
     const modelsDirRaw = process.env.MCP_MODELS_DIR || ".local/models";
     const modelsDir = path.isAbsolute(modelsDirRaw)
