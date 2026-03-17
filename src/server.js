@@ -9,6 +9,7 @@ import { runReadQuery } from "./lib/db-client.js";
 import { anonymizeRows } from "./lib/anonymizer.js";
 import { evaluateOrigin } from "./lib/origin-validation.js";
 import { runProdPreflight } from "./lib/preflight.js";
+import { applyJsonAcceptCompatibility } from "./lib/accept-compat.js";
 
 const config = getProdConfig();
 const SESSION_ID_REGEX = /^[a-zA-Z0-9-]{1,128}$/;
@@ -251,6 +252,12 @@ const app = createMcpExpressApp({
 });
 const transports = new Map();
 app.use(withOriginValidation);
+app.use((req, _res, next) => {
+    if (req.path === config.server.path) {
+        applyJsonAcceptCompatibility(req.headers, { sseEnabled: config.server.sseEnabled });
+    }
+    next();
+});
 app.options(config.server.path, (_req, res) => {
     sendCorsPreflight(res);
 });
