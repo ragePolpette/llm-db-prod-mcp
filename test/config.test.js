@@ -124,6 +124,21 @@ test("getProdConfig exposes bounded preflight timeout", () => {
     );
 });
 
+test("getProdConfig defaults session ttl to no expiry", () => {
+    withEnv(
+        {
+            DB_PROD_CONNECTION_STRING: "Server=runtime;",
+            ANON_HASH_SALT: "Stable-secret-for-tests-2026!",
+            MCP_PROD_SESSION_TTL_MS: undefined
+        },
+        () => {
+            const { getProdConfig } = requireConfigModule();
+            const cfg = getProdConfig();
+            assert.equal(cfg.sessionTtlMs, 0);
+        }
+    );
+});
+
 test("getProdConfig clamps max result bytes to hard 5MB cap", () => {
     withEnv(
         {
