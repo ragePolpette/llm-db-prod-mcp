@@ -10,9 +10,11 @@ import { anonymizeRows } from "./lib/anonymizer.js";
 import { evaluateOrigin } from "./lib/origin-validation.js";
 import { runProdPreflight } from "./lib/preflight.js";
 import { applyJsonAcceptCompatibility } from "./lib/accept-compat.js";
+import { createSessionStore } from "./lib/session-store.js";
 
 const config = getProdConfig();
 const SESSION_ID_REGEX = /^[a-zA-Z0-9-]{1,128}$/;
+const sessions = createSessionStore({ ttlMs: config.sessionTtlMs });
 
 function normalizeSessionId(sessionIdRaw) {
     if (Array.isArray(sessionIdRaw)) {
@@ -250,7 +252,6 @@ const app = createMcpExpressApp({
     host: config.server.host,
     allowedHosts: config.server.allowedHosts?.length ? config.server.allowedHosts : undefined
 });
-const transports = new Map();
 app.use(withOriginValidation);
 app.use((req, _res, next) => {
     if (req.path === config.server.path) {
@@ -268,7 +269,8 @@ app.get("/health", (_req, res) => {
         server: "llm-db-prod-mcp",
         endpoint: config.server.path,
         pid: process.pid,
-        uptimeSec: Math.floor(process.uptime())
+        uptimeSec: Math.floor(process.uptime()),
+        activeSessions: sessions.size()
     });
 });
 
@@ -279,13 +281,16 @@ app.post(config.server.path, async (req, res) => {
     let transport;
 
     try {
-        if (sessionId && transports.has(sessionId)) {
-            transport = transports.get(sessionId);
+        if (sessionId) {
+            transport = sessions.get(sessionId);
+        }
+
+        if (sessionId && transport) {
             await transport.handleRequest(req, res, req.body);
             return;
         }
 
-        if (hasSessionHeader && (!sessionId || !transports.has(sessionId))) {
+        if (hasSessionHeader && (!sessionId || !transport)) {
             sendUnknownSession(res);
             return;
         }
@@ -297,15 +302,15 @@ app.post(config.server.path, async (req, res) => {
                 enableJsonResponse: !config.server.sseEnabled,
                 onsessioninitialized: sid => {
                     if (normalizeSessionId(sid)) {
-                        transports.set(sid, transport);
+                        sessions.set(sid, transport);
                     }
                 }
             });
 
             transport.onclose = () => {
                 const sid = transport.sessionId;
-                if (sid && transports.has(sid)) {
-                    transports.delete(sid);
+                if (sid) {
+                    sessions.delete(sid);
                 }
             };
 
@@ -337,13 +342,14 @@ app.get(config.server.path, async (req, res) => {
     }
 
     const sessionId = normalizeSessionId(rawSessionId);
-    if (!sessionId || !transports.has(sessionId)) {
+    const transport = sessionId ? sessions.get(sessionId) : null;
+    if (!sessionId || !transport) {
         sendUnknownSession(res);
         return;
     }
 
     try {
-        await transports.get(sessionId).handleRequest(req, res);
+        await transport.handleRequest(req, res);
     } catch (error) {
         const message = error instanceof Error ? error.message : "Internal server error";
         console.error("GET MCP request failed:", message);
@@ -361,13 +367,14 @@ app.delete(config.server.path, async (req, res) => {
     }
 
     const sessionId = normalizeSessionId(rawSessionId);
-    if (!sessionId || !transports.has(sessionId)) {
+    const transport = sessionId ? sessions.get(sessionId) : null;
+    if (!sessionId || !transport) {
         sendUnknownSession(res);
         return;
     }
 
     try {
-        await transports.get(sessionId).handleRequest(req, res);
+        await transport.handleRequest(req, res);
     } catch (error) {
         const message = error instanceof Error ? error.message : "Internal server error";
         console.error("DELETE MCP request failed:", message);
