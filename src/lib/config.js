@@ -144,7 +144,7 @@ function assertNoProdConnectionStringInDotEnv() {
     const dotEnvKeys = getDotEnvKeysFromCwd();
     if (dotEnvKeys.has("db_prod_connection_string")) {
         throw new Error(
-            "Il file .env non puo' contenere DB_PROD_CONNECTION_STRING: usa una variabile ambiente di processo o un secret runtime esterno."
+            "Il file .env non puo' contenere DB_PROD_CONNECTION_STRING: usa solo una variabile ambiente di processo o input interattivo runtime."
         );
     }
 }
