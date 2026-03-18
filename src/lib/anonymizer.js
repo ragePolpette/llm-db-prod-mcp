@@ -83,8 +83,6 @@ const EXACT_KEY_KIND = new Map([
     ["provincia", "city"],
     ["nazione", "city"],
     ["note", "text"],
-    ["descrizione", "text"],
-    ["description", "text"],
     ["comment", "text"],
     ["memo", "text"]
 ]);
@@ -236,7 +234,7 @@ function inferKindHeuristic(key) {
         return "city";
     }
 
-    if (hasAnyToken(tokens, ["note", "descrizione", "description", "comment", "memo"])) {
+    if (hasAnyToken(tokens, ["note", "comment", "memo"])) {
         return "text";
     }
 
@@ -258,12 +256,17 @@ function cacheKeyFor(normalizedKey, scope = GLOBAL_CACHE_SCOPE) {
     return `${normalizeCacheScope(scope)}|${String(normalizedKey || "")}`;
 }
 
-function getCachedKind(normalizedKey, scope = GLOBAL_CACHE_SCOPE) {
+function getCachedKindDecision(normalizedKey, scope = GLOBAL_CACHE_SCOPE) {
     const cacheKey = cacheKeyFor(normalizedKey, scope);
     if (!LLM_KIND_CACHE.has(cacheKey)) return null;
     const value = LLM_KIND_CACHE.get(cacheKey);
     LLM_KIND_CACHE.delete(cacheKey);
     LLM_KIND_CACHE.set(cacheKey, value);
+    return value;
+}
+
+function getCachedKind(normalizedKey, scope = GLOBAL_CACHE_SCOPE) {
+    const value = getCachedKindDecision(normalizedKey, scope);
     return value === NONE_KIND ? null : value;
 }
 
@@ -303,6 +306,12 @@ function deriveCacheScopeFromSql(sqlText) {
     return sources.sort().join("|");
 }
 
+function extractSqlSources(sqlText) {
+    const sql = String(sqlText || "");
+    const matches = [...sql.matchAll(/\b(?:from|join)\s+([A-Za-z0-9_\[\]".]+)/gi)];
+    return [...new Set(matches.map(match => normalizeSqlSourceName(match[1])).filter(Boolean))].sort();
+}
+
 function resolveKindForKey(key, fieldKindMap, cacheScope = GLOBAL_CACHE_SCOPE) {
     const normalized = normalizeKey(key);
     if (!normalized) return null;
@@ -311,9 +320,9 @@ function resolveKindForKey(key, fieldKindMap, cacheScope = GLOBAL_CACHE_SCOPE) {
         return fieldKindMap.get(normalized);
     }
 
-    const cached = getCachedKind(normalized, cacheScope);
-    if (cached) {
-        return cached;
+    const cachedDecision = getCachedKindDecision(normalized, cacheScope);
+    if (cachedDecision) {
+        return cachedDecision;
     }
 
     return inferKindHeuristic(key);
@@ -415,6 +424,9 @@ function deterministicFallback(rows, cfg, fieldKindMap, cacheScope = GLOBAL_CACH
             if (value === null || value === undefined) continue;
 
             const kind = resolveKindForValue(key, value, fieldKindMap, cacheScope);
+            if (kind === NONE_KIND) {
+                continue;
+            }
             if (kind) {
                 out[key] = replaceByKind(kind, key, value, cfg);
                 continue;
@@ -453,25 +465,36 @@ async function identifyFieldsWithOllama(rows, cfg, cacheScope = GLOBAL_CACHE_SCO
     const payload = buildFieldProbePayload(rows);
     if (payload.length === 0) return new Map();
 
-    const unknown = payload.filter((entry) => !getCachedKind(normalizeKey(entry.key), cacheScope));
+    const unknown = payload.filter((entry) => !getCachedKindDecision(normalizeKey(entry.key), cacheScope));
     if (unknown.length === 0) {
         const known = new Map();
         for (const entry of payload) {
             const normalized = normalizeKey(entry.key);
-            const kind = getCachedKind(normalized, cacheScope);
+            const kind = getCachedKindDecision(normalized, cacheScope);
             if (kind) known.set(normalized, kind);
         }
         return known;
     }
 
     const systemPrompt = [
-        "Classifica nomi campo database per anonimizzazione.",
+        "Classifica campi database per anonimizzazione.",
         "Rispondi SOLO con JSON valido formato: {\"fields\":{\"<key>\":\"<kind>\"}}.",
         "kind ammessi: email, phone, cf, vat, name, org, address, city, text, none.",
+        "Usa none per campi tecnici, amministrativi, contabili, numerici o descrittivi non personali e non identificativi.",
+        "Esempi tipici di none: id, codice, conto, numero documento, protocollo, stato, tipo, flag, data, timestamp, importo, aliquota, descrizione contabile, causale, riferimento amministrativo, note tecniche, campi di classificazione interna.",
+        "Usa text solo se il contenuto libero puo' ragionevolmente contenere dati personali o aziendali sensibili in chiaro.",
+        "Non usare text come fallback generico per qualunque descrizione.",
+        "Usa org solo per denominazioni o ragioni sociali reali di aziende o enti.",
+        "Usa name solo per nomi o cognomi di persone.",
+        "Usa vat solo per partite IVA reali e cf solo per codici fiscali reali.",
+        "Se il campo non appare chiaramente sensibile, scegli none.",
         "Non aggiungere testo extra."
     ].join(" ");
 
-    const userPrompt = JSON.stringify({ fields: unknown });
+    const userPrompt = JSON.stringify({
+        query_sources: extractSqlSources(cfg?.sqlText),
+        fields: unknown
+    });
     const timeoutMs = Math.min(Number(cfg?.timeoutMs ?? 5000), 5000);
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort("timeout"), timeoutMs);
@@ -524,7 +547,7 @@ async function identifyFieldsWithOllama(rows, cfg, cacheScope = GLOBAL_CACHE_SCO
     const resolved = new Map();
     for (const entry of payload) {
         const normalized = normalizeKey(entry.key);
-        const kind = getCachedKind(normalized, cacheScope);
+        const kind = getCachedKindDecision(normalized, cacheScope);
         if (kind) resolved.set(normalized, kind);
     }
     return resolved;
@@ -565,7 +588,7 @@ export async function anonymizeRows(rows, cfg, options = {}) {
 
     let fieldKindMap = new Map();
     try {
-        fieldKindMap = await resolveFieldKinds(rows, cfg, cacheScope);
+        fieldKindMap = await resolveFieldKinds(rows, { ...cfg, sqlText: options?.sqlText }, cacheScope);
     } catch (error) {
         if (mode === "llm-strict" && !cfg?.failOpen) {
             throw error;
@@ -586,5 +609,6 @@ export const __anonymizerTestUtils = {
     getKindCacheKeys() {
         return [...LLM_KIND_CACHE.keys()];
     },
-    setCachedKind
+    setCachedKind,
+    normalizeKind
 };
