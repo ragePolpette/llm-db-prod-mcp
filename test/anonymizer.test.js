@@ -292,3 +292,79 @@ test("query scope cache reuses the same source without a second ollama call", as
         globalThis.fetch = originalFetch;
     }
 });
+
+test("hybrid classification keeps accounting description unchanged when ollama returns none", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+        ok: true,
+        async json() {
+            return {
+                message: {
+                    content: JSON.stringify({
+                        fields: {
+                            Descrizione: "none"
+                        }
+                    })
+                }
+            };
+        }
+    });
+
+    try {
+        const rows = [{ Descrizione: "Conto economico riclassificato" }];
+        const anonymized = await anonymizeRows(
+            rows,
+            {
+                ...baseCfg,
+                provider: "ollama",
+                mode: "hybrid",
+                fieldIdentification: "hybrid",
+                baseUrl: "http://127.0.0.1:11434",
+                model: "qwen2.5:3b-instruct"
+            },
+            { sqlText: "select Descrizione from dbo.DocPdc" }
+        );
+
+        assert.equal(anonymized[0].Descrizione, "Conto economico riclassificato");
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("hybrid classification can keep accounting code columns unchanged when ollama returns none", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+        ok: true,
+        async json() {
+            return {
+                message: {
+                    content: JSON.stringify({
+                        fields: {
+                            Conto: "none"
+                        }
+                    })
+                }
+            };
+        }
+    });
+
+    try {
+        const rows = [{ Conto: "1213628" }];
+        const anonymized = await anonymizeRows(
+            rows,
+            {
+                ...baseCfg,
+                provider: "ollama",
+                mode: "hybrid",
+                fieldIdentification: "hybrid",
+                baseUrl: "http://127.0.0.1:11434",
+                model: "qwen2.5:3b-instruct"
+            },
+            { sqlText: "select Conto from dbo.DocPdc" }
+        );
+
+        assert.equal(anonymized[0].Conto, "1213628");
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
