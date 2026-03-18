@@ -12,6 +12,14 @@ function toInt(value, fallback) {
     return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function parseSessionTtlMs(value, fallback) {
+    const parsed = toInt(value, fallback);
+    if (parsed <= 0) {
+        return 0;
+    }
+    return clamp(parsed, 60000, 86400000);
+}
+
 function clamp(value, min, max) {
     return Math.max(min, Math.min(value, max));
 }
@@ -218,6 +226,7 @@ export function getProdConfig() {
         connectionString: process.env.DB_PROD_CONNECTION_STRING || "",
         maxRows: clamp(toInt(process.env.DB_PROD_MAX_ROWS, 200), 1, 250),
         queryTimeoutMs: clamp(toInt(process.env.DB_PROD_QUERY_TIMEOUT_MS, 9000), 1000, 10000),
+        sessionTtlMs: parseSessionTtlMs(process.env.MCP_PROD_SESSION_TTL_MS, 0),
         preflightTimeoutMs: clamp(toInt(process.env.DB_PROD_PREFLIGHT_TIMEOUT_MS, 8000), 1000, 30000),
         maxResultBytes: clamp(toInt(process.env.DB_PROD_MAX_RESULT_BYTES, 5 * 1024 * 1024), 128 * 1024, 5 * 1024 * 1024),
         textSizeBytes: clamp(toInt(process.env.DB_PROD_TEXTSIZE_BYTES, 262144), 4096, 1048576),
