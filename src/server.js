@@ -93,7 +93,7 @@ function safeJson(value) {
 
 function logDbEvent(event, payload) {
     const timestamp = new Date().toISOString();
-    process.stderr.write(`[DB_PROD_MCP] ${timestamp} ${event} ${safeJson(payload)}\n`);
+    process.stdout.write(`[DB_PROD_MCP] ${timestamp} ${event} ${safeJson(payload)}\n`);
 }
 
 function createMcpServer() {
