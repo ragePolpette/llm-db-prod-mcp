@@ -2,10 +2,7 @@ import { createHash } from "node:crypto";
 
 const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_TEXT_REGEX = /(?=.*[+\s().-])(\+?\d[\d\s().-]{6,}\d)/g;
-const FISCAL_REGEX = /\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/gi;
-const VAT_REGEX = /\b\d{11,16}\b/g;
-
-const KIND_VALUES = new Set(["email", "phone", "cf", "vat", "name", "org", "address", "city", "text"]);
+const KIND_VALUES = new Set(["email", "phone", "name", "org", "address", "city", "text"]);
 const NONE_KIND = "__none__";
 const LLM_KIND_CACHE_MAX_SIZE = 512;
 const GLOBAL_CACHE_SCOPE = "__global__";
@@ -32,7 +29,18 @@ const SAFE_EXACT_KEYS = new Set([
     "data",
     "estero",
     "numrif",
-    "num_rif"
+    "num_rif",
+    "cf",
+    "codicefiscale",
+    "codice_fiscale",
+    "cod_fiscale",
+    "codfiscale",
+    "codfiscalerl",
+    "partitaiva",
+    "partita_iva",
+    "piva",
+    "vat",
+    "pi"
 ]);
 const SAFE_KEY_TOKENS = new Set([
     "id",
@@ -87,16 +95,6 @@ const EXACT_KEY_KIND = new Map([
     ["cellulare", "phone"],
     ["mobile", "phone"],
     ["fax", "phone"],
-    ["cf", "cf"],
-    ["codicefiscale", "cf"],
-    ["cod_fiscale", "cf"],
-    ["codfiscale", "cf"],
-    ["codfiscalerl", "cf"],
-    ["partitaiva", "vat"],
-    ["partita_iva", "vat"],
-    ["piva", "vat"],
-    ["vat", "vat"],
-    ["pi", "vat"],
     ["nome", "name"],
     ["cognome", "name"],
     ["nomerl", "name"],
@@ -303,26 +301,6 @@ function inferKindHeuristic(key) {
     }
 
     if (
-        compact.includes("codicefiscale") ||
-        compact.includes("codfiscale") ||
-        compact === "cf" ||
-        hasAnyToken(tokens, ["cf", "codicefiscale", "codfiscale"])
-    ) {
-        return "cf";
-    }
-
-    if (
-        compact.includes("partitaiva") ||
-        compact === "piva" ||
-        compact === "vat" ||
-        (tokens.has("partita") && tokens.has("iva")) ||
-        tokens.has("piva") ||
-        tokens.has("vat")
-    ) {
-        return "vat";
-    }
-
-    if (
         compact.startsWith("nome") ||
         compact.startsWith("cognome") ||
         hasAnyToken(tokens, ["nome", "name", "cognome", "surname", "firstname", "lastname", "referente"])
@@ -482,10 +460,6 @@ function replaceByKind(kind, key, value, cfg) {
             return `user_${stableDigest(salt, normalizedKey, raw, 10).toLowerCase()}@example.invalid`;
         case "phone":
             return toPhoneFromDigest(salt, normalizedKey, raw);
-        case "cf":
-            return `CF_${stableDigest(salt, normalizedKey, raw, 16)}`;
-        case "vat":
-            return `VAT_${stableDigest(salt, normalizedKey, raw, 12)}`;
         case "address":
             return `ADDRESS_${stableDigest(salt, normalizedKey, raw, 8)}`;
         case "city":
@@ -505,8 +479,6 @@ function maskInlineWithHashes(value, cfg) {
     const salt = getHashSalt(cfg);
     return String(value)
         .replace(EMAIL_REGEX, (match) => `user_${stableDigest(salt, "inline_email", match, 10).toLowerCase()}@example.invalid`)
-        .replace(FISCAL_REGEX, (match) => `CF_${stableDigest(salt, "inline_cf", match, 16)}`)
-        .replace(VAT_REGEX, (match) => `VAT_${stableDigest(salt, "inline_vat", match, 12)}`)
         .replace(PHONE_TEXT_REGEX, (match) => toPhoneFromDigest(salt, "inline_phone", match));
 }
 
@@ -608,14 +580,14 @@ async function identifyFieldsWithOllama(rows, cfg, cacheScope = GLOBAL_CACHE_SCO
     const systemPrompt = [
         "Classifica campi database per anonimizzazione.",
         "Rispondi SOLO con JSON valido formato: {\"fields\":{\"<key>\":\"<kind>\"}}.",
-        "kind ammessi: email, phone, cf, vat, name, org, address, city, text, none.",
+        "kind ammessi: email, phone, name, org, address, city, text, none.",
         "Usa none per campi tecnici, amministrativi, contabili, numerici, enumerati o descrittivi non personali e non identificativi.",
         "Esempi tipici di none: id, codice, conto, numero documento, protocollo, stato, tipo, flag, data, timestamp, importo, aliquota, descrizione contabile, causale, riferimento amministrativo, note tecniche, campi di classificazione interna, codici fissi come OQ00000009 e flag come 0/1 o Y/N.",
         "Usa text solo se il contenuto libero puo' ragionevolmente contenere dati personali o aziendali sensibili in chiaro.",
         "Non usare text come fallback generico per qualunque descrizione.",
         "Usa org solo per denominazioni o ragioni sociali reali di aziende o enti.",
         "Usa name solo per nomi o cognomi di persone.",
-        "Usa vat solo per partite IVA reali e cf solo per codici fiscali reali.",
+        "Codice fiscale e partita IVA in questo contesto DB non sono campi sensibili: scegli none.",
         "Se il campo non appare chiaramente sensibile, scegli none.",
         "Non aggiungere testo extra."
     ].join(" ");

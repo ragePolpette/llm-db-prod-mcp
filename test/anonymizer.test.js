@@ -58,6 +58,15 @@ test("known pii keys still use specific deterministic replacements", async () =>
     assert.match(anonymized[0].telefono, /^\+39\d+$/);
 });
 
+test("cf and partita iva remain unchanged in db context", async () => {
+    const rows = [{ cf: "RSSMRA80A01H501U", partita_iva: "12345678901" }];
+
+    const anonymized = await anonymizeRows(rows, baseCfg);
+
+    assert.equal(anonymized[0].cf, "RSSMRA80A01H501U");
+    assert.equal(anonymized[0].partita_iva, "12345678901");
+});
+
 test("llm-strict uses the model only to classify fields and keeps masking deterministic", async () => {
     const originalFetch = globalThis.fetch;
     let fetchCalls = 0;
