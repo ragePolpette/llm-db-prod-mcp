@@ -32,6 +32,23 @@ test("explicitly safe technical string fields remain unchanged", async () => {
     assert.equal(anonymized[0].created_at, "2026-03-06T10:00:00Z");
 });
 
+test("technical flags and generated references remain unchanged", async () => {
+    const rows = [{ Estero: "1", numrif: "OQ00000009" }];
+
+    const anonymized = await anonymizeRows(rows, baseCfg);
+
+    assert.equal(anonymized[0].Estero, "1");
+    assert.equal(anonymized[0].numrif, "OQ00000009");
+});
+
+test("structured technical codes remain unchanged when the field name is operational", async () => {
+    const rows = [{ codice_ordine: "OQ00000010" }];
+
+    const anonymized = await anonymizeRows(rows, baseCfg);
+
+    assert.equal(anonymized[0].codice_ordine, "OQ00000010");
+});
+
 test("known pii keys still use specific deterministic replacements", async () => {
     const rows = [{ email: "user@example.com", telefono: "+39 333 1234567" }];
 
