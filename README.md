@@ -1,5 +1,11 @@
 # llm-db-prod-mcp
 
+> [!WARNING]
+> Deprecated repository.
+> This project has been superseded by [`llm-sql-db-mcp`](https://github.com/ragePolpette/llm-sql-db-mcp), which unifies the previous dev/prod split into a single target-based SQL MCP server.
+>
+> Use `llm-sql-db-mcp` for new work. This repository is kept only as historical reference for the original production-read/anonymized flow.
+
 Questo progetto e' destinato a vivere come **repository standalone** dentro il workspace DEV `Yetzirah`.
 Il runtime locale, quando deployato, resta in `Binah\llm-db-prod-mcp`.
 
