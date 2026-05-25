@@ -60,3 +60,6 @@ models/
 claude.md
 .DS_Store
 Thumbs.db
+
+# Local agent instruction files
+AGENTS.md
